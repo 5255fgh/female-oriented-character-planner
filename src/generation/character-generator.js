@@ -147,6 +147,7 @@ export async function expandCharacter(concept, brief, llmClient) {
   const response = await llmClient.completeJson({
     task: "character-expansion",
     messages,
+    maxTokens: 8192,
   });
   const character = fillCharacterDefaults(response, validatedConcept.name);
   return assertCharacterDraft(character);

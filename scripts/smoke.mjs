@@ -189,7 +189,26 @@ async function runBusinessFlowSmoke() {
     const concepts = await generateConcepts(brief, client);
     assert.equal(concepts.length, 3, "业务接口必须生成正好 3 个候选");
 
-    const originalCharacter = await expandCharacter(concepts[0], brief, client);
+    let expansionRequest;
+    const expansionClient = {
+      completeText(request) {
+        return client.completeText(request);
+      },
+      completeJson(request) {
+        expansionRequest = request;
+        return client.completeJson(request);
+      },
+    };
+    const originalCharacter = await expandCharacter(
+      concepts[0],
+      brief,
+      expansionClient,
+    );
+    assert.equal(
+      expansionRequest.maxTokens,
+      8192,
+      "完整角色生成必须为推理与结构化正文预留足够 token",
+    );
     const fieldPath = "persona.background";
     const patch = await regenerateField(
       originalCharacter,
@@ -342,6 +361,13 @@ async function runLLMClientSmoke() {
         ok: status >= 200 && status < 300,
         status,
         statusText: response.statusText ?? (status === 200 ? "OK" : "Error"),
+        headers: {
+          get(name) {
+            return name.toLowerCase() === "content-type"
+              ? response.contentType ?? "application/json"
+              : null;
+          },
+        },
         async text() {
           return Object.prototype.hasOwnProperty.call(response, "rawText")
             ? response.rawText
@@ -367,6 +393,16 @@ async function runLLMClientSmoke() {
       messages: [{ role: "user", content: "只返回原始 JSON" }],
     });
     assert.deepEqual(result, expected, `${label} 应解析为预期 JSON`);
+    assert.equal(harness.callCount, 1, `${label} 不应触发重试`);
+  }
+
+  async function assertSinglePayloadParse(label, payload, expected) {
+    const harness = installFetchHarness([{ payload }]);
+    const result = await createClient().completeJson({
+      task: label,
+      messages: [{ role: "user", content: "只返回原始 JSON" }],
+    });
+    assert.deepEqual(result, expected, `${label} 应从兼容正文路径解析 JSON`);
     assert.equal(harness.callCount, 1, `${label} 不应触发重试`);
   }
 
@@ -419,6 +455,174 @@ async function runLLMClientSmoke() {
       ],
       { ok: true },
     );
+    await assertSingleRequestParse(
+      "content 数组忽略推理项",
+      [
+        { type: "reasoning", text: '{"internal":true}' },
+        { type: "text", text: '{"ok":true}' },
+      ],
+      { ok: true },
+    );
+    await assertSinglePayloadParse(
+      "choices[0].text",
+      {
+        choices: [
+          {
+            message: { content: "" },
+            text: '{"ok":true}',
+            finish_reason: "stop",
+          },
+        ],
+      },
+      { ok: true },
+    );
+    await assertSinglePayloadParse(
+      "顶层 output_text",
+      { output_text: '{"ok":true}' },
+      { ok: true },
+    );
+    await assertSinglePayloadParse(
+      "output content text",
+      {
+        output: [
+          {
+            type: "reasoning",
+            content: [
+              { type: "text", text: '{"internal":true}' },
+            ],
+          },
+          {
+            type: "message",
+            content: [
+              { type: "output_text", text: '{"ok":true}' },
+            ],
+          },
+        ],
+      },
+      { ok: true },
+    );
+    await assertSinglePayloadParse(
+      "非流式 delta 结构",
+      {
+        choices: [
+          {
+            delta: {
+              reasoning_content: "不得作为正文",
+              content: '{"ok":true}',
+            },
+            finish_reason: "stop",
+          },
+        ],
+      },
+      { ok: true },
+    );
+
+    const chatSse = [
+      {
+        model: "smoke-model",
+        choices: [{ delta: { content: '{"ok":' }, finish_reason: null }],
+      },
+      {
+        choices: [{ delta: { content: "true}" }, finish_reason: null }],
+      },
+      {
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { completion_tokens: 2 },
+      },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") +
+      "data: [DONE]\n\n";
+    const chatSseHarness = installFetchHarness([
+      { rawText: chatSse, contentType: "text/event-stream; charset=utf-8" },
+    ]);
+    const chatSseResult = await createClient().completeJson({
+      task: "chat-sse",
+      messages: [{ role: "user", content: "返回 JSON" }],
+    });
+    assert.deepEqual(chatSseResult, { ok: true }, "Chat SSE delta 必须按顺序拼接");
+    assert.equal(chatSseHarness.callCount, 1);
+
+    const responsesSse = [
+      { type: "response.output_text.delta", delta: '{"ok":' },
+      { type: "response.output_text.delta", delta: "true}" },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") +
+      "data: [DONE]\n\n";
+    const responsesSseHarness = installFetchHarness([
+      { rawText: responsesSse, contentType: "text/event-stream" },
+    ]);
+    const responsesSseResult = await createClient().completeJson({
+      task: "responses-sse",
+      messages: [{ role: "user", content: "返回 JSON" }],
+    });
+    assert.deepEqual(
+      responsesSseResult,
+      { ok: true },
+      "Responses output_text delta 必须按顺序拼接",
+    );
+    assert.equal(responsesSseHarness.callCount, 1);
+
+    const conflictingSseEvent = {
+      type: "response.output_text.delta",
+      delta: "OK",
+      choices: [{ delta: { content: "OK" }, finish_reason: null }],
+    };
+    const conflictingSseHarness = installFetchHarness([
+      {
+        rawText: `data: ${JSON.stringify(conflictingSseEvent)}\n\ndata: [DONE]\n\n`,
+        contentType: "text/event-stream",
+      },
+    ]);
+    const conflictingSseResult = await createClient().completeText({
+      task: "conflicting-sse-paths",
+      messages: [{ role: "user", content: "返回 OK" }],
+    });
+    assert.equal(
+      conflictingSseResult,
+      "OK",
+      "SSE 只能选择一个 delta 路径族，不能重复拼接正文",
+    );
+    assert.equal(conflictingSseHarness.callCount, 1);
+
+    const textHarness = installFetchHarness([
+      {
+        payload: {
+          model: "smoke-model",
+          choices: [
+            {
+              message: { role: "assistant", content: "OK" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+        },
+      },
+    ]);
+    const textResult = await createClient().completeText({
+      task: "minimal-text",
+      messages: [
+        { role: "system", content: "你是接口连通性测试助手" },
+        { role: "user", content: "只输出 OK" },
+      ],
+      temperature: 0,
+      maxTokens: 512,
+    });
+    assert.equal(textResult, "OK", "最小文本响应必须返回非空正文");
+    assert.equal(textHarness.requestBodies[0].stream, false, "请求必须显式禁用流式");
+    assert.equal(textHarness.requestBodies[0].max_tokens, 512, "必须透传 maxTokens");
+    assert.equal(
+      Object.hasOwn(textHarness.requestBodies[0], "response_format"),
+      false,
+      "completeText 不得发送 JSON response_format",
+    );
+    assert.equal(
+      Object.hasOwn(textHarness.requestBodies[0], "max_completion_tokens"),
+      false,
+      "DeepSeek Chat Completions 不得混入 max_completion_tokens",
+    );
+    assert.equal(
+      Object.hasOwn(textHarness.requestBodies[0], "tools"),
+      false,
+      "最小文本请求不得发送 tools",
+    );
 
     const retryHarness = installFetchHarness([
       { content: "这不是 JSON" },
@@ -430,6 +634,17 @@ async function runLLMClientSmoke() {
     });
     assert.deepEqual(retriedResult, { ok: true }, "第二次合法响应应成功解析");
     assert.equal(retryHarness.callCount, 2, "解析失败后必须且只能重试一次");
+    assert.equal(retryHarness.requestBodies[0].stream, false, "JSON 请求必须显式禁用流式");
+    assert.deepEqual(
+      retryHarness.requestBodies[0].response_format,
+      { type: "json_object" },
+      "第一次 JSON 请求应使用兼容 JSON mode",
+    );
+    assert.equal(
+      Object.hasOwn(retryHarness.requestBodies[1], "response_format"),
+      false,
+      "第二次请求必须移除 response_format 以兼容异常服务商",
+    );
     assert.equal(
       retryHarness.requestBodies[1].messages.length,
       2,
@@ -441,19 +656,179 @@ async function runLLMClientSmoke() {
       "重试必须使用指定的 JSON 纠正消息",
     );
 
-    const emptyHarness = installFetchHarness([
-      { content: "" },
-      { content: "  \n\t" },
+    const lengthRetryHarness = installFetchHarness([
+      {
+        payload: {
+          model: "smoke-model",
+          choices: [
+            {
+              message: { content: '{"partial":true}' },
+              finish_reason: "length",
+            },
+          ],
+          usage: { completion_tokens: 64 },
+        },
+      },
+      {
+        payload: {
+          model: "smoke-model",
+          choices: [
+            {
+              message: { content: '{"ok":true}' },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { completion_tokens: 20 },
+        },
+      },
     ]);
-    await assert.rejects(
-      createClient().completeJson({
+    const lengthRetryResult = await createClient().completeJson({
+      task: "retry-length-response",
+      messages: [{ role: "user", content: "返回 JSON" }],
+    });
+    assert.deepEqual(
+      lengthRetryResult,
+      { ok: true },
+      "finish_reason=length 的可解析片段也不得作为完整 JSON 返回",
+    );
+    assert.equal(lengthRetryHarness.callCount, 2);
+    assert.equal(
+      Object.hasOwn(lengthRetryHarness.requestBodies[1], "response_format"),
+      false,
+    );
+
+    const internalReasoning = "不得出现在错误消息中的内部推理";
+    const emptyPayload = {
+      model: "diagnostic-model",
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "",
+            reasoning_content: internalReasoning,
+          },
+          finish_reason: "length",
+        },
+      ],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 64,
+        total_tokens: 74,
+        completion_tokens_details: { reasoning_tokens: 64 },
+      },
+    };
+    const emptyHarness = installFetchHarness([
+      { payload: emptyPayload },
+      { payload: emptyPayload },
+    ]);
+    let emptyError;
+    try {
+      await createClient().completeJson({
         task: "empty-content",
         messages: [{ role: "user", content: "返回 JSON" }],
-      }),
-      /LLM JSON parsing failed after 2 attempts:.*empty/i,
-      "连续空 content 必须抛出清晰错误",
+      });
+    } catch (error) {
+      emptyError = error;
+    }
+    assert.ok(emptyError instanceof Error, "连续空 content 必须抛出 Error");
+    assert.match(emptyError.message, /LLM JSON parsing failed after 2 attempts/);
+    assert.match(emptyError.message, /model=diagnostic-model/);
+    assert.match(emptyError.message, /finish_reason=length/);
+    assert.match(emptyError.message, /choices=1/);
+    assert.match(emptyError.message, /completion_tokens/);
+    assert.match(emptyError.message, /structure=transport=json/);
+    assert.match(emptyError.message, /possible_body_paths=choices\[0\]\.message\.content/);
+    assert.match(emptyError.message, /nonempty_body_paths=none/);
+    assert.match(emptyError.message, /reasoning_fields_ignored=true/);
+    assert.match(emptyError.message, /increase maxTokens/);
+    assert.doesNotMatch(emptyError.message, new RegExp(internalReasoning));
+    const emptyErrorPrefix = "LLM JSON parsing failed after 2 attempts: ";
+    assert.ok(
+      emptyError.message.slice(emptyErrorPrefix.length).length <= 500,
+      "空响应诊断摘要不得超过 500 字符",
     );
     assert.equal(emptyHarness.callCount, 2, "空 content 最多重试一次");
+
+    const longDiagnosticPayload = {
+      model: `model-${"m".repeat(300)}`,
+      choices: [
+        {
+          message: {
+            content: "",
+            reasoning_content: "仍不得泄露的内部推理",
+          },
+          finish_reason: "length",
+        },
+      ],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 64,
+        total_tokens: 74,
+        provider_detail: "u".repeat(500),
+      },
+      [`field-${"x".repeat(300)}`]: true,
+    };
+    const longDiagnosticHarness = installFetchHarness([
+      { payload: longDiagnosticPayload },
+      { payload: longDiagnosticPayload },
+    ]);
+    let longDiagnosticError;
+    try {
+      await createClient().completeJson({
+        task: "long-empty-diagnostic",
+        messages: [{ role: "user", content: "返回 JSON" }],
+      });
+    } catch (error) {
+      longDiagnosticError = error;
+    }
+    assert.ok(longDiagnosticError instanceof Error);
+    for (const requiredLabel of [
+      "model=",
+      "finish_reason=length",
+      "choices=1",
+      "usage=",
+      "structure=",
+      "possible_body_paths=",
+      "nonempty_body_paths=none",
+      "reasoning_fields_ignored=true",
+      "hint=increase maxTokens",
+    ]) {
+      assert.ok(
+        longDiagnosticError.message.includes(requiredLabel),
+        `长诊断仍必须包含 ${requiredLabel}`,
+      );
+    }
+    assert.ok(
+      longDiagnosticError.message.slice(emptyErrorPrefix.length).length <= 500,
+      "长字段诊断摘要仍不得超过 500 字符",
+    );
+    assert.equal(longDiagnosticHarness.callCount, 2);
+
+    for (const finishReason of ["tool_calls", "content_filter"]) {
+      const finishHarness = installFetchHarness([
+        {
+          payload: {
+            model: "smoke-model",
+            choices: [
+              { message: { content: "" }, finish_reason: finishReason },
+            ],
+            usage: { completion_tokens: 0 },
+          },
+        },
+      ]);
+      let finishError;
+      try {
+        await createClient().completeText({
+          task: `empty-${finishReason}`,
+          messages: [{ role: "user", content: "返回文本" }],
+        });
+      } catch (error) {
+        finishError = error;
+      }
+      assert.ok(finishError instanceof Error);
+      assert.match(finishError.message, new RegExp(`finish_reason=${finishReason}`));
+      assert.equal(finishHarness.callCount, 1);
+    }
 
     const invalidHarness = installFetchHarness([
       { content: "完全非法的文本" },
