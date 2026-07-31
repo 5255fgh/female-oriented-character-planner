@@ -82,9 +82,8 @@ function parseJsonContent(content) {
     throw new Error("LLM response content was empty");
   }
 
-  const fencedMatch = trimmed.match(/^```json[ \t]*\r?\n?([\s\S]*?)\r?\n?```$/i);
-  const jsonText = fencedMatch ? fencedMatch[1].trim() : trimmed;
-  return JSON.parse(jsonText);
+  // 结构化响应必须是原始 JSON；Markdown 围栏应视为无效并触发一次重试。
+  return JSON.parse(trimmed);
 }
 
 /**

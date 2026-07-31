@@ -595,7 +595,7 @@ function renderPackBlock(state, pack, block) {
       <textarea id="pack-${escapeHtml(key)}" rows="8" data-pack-flow="${escapeHtml(pack.flowId)}" data-pack-block="${escapeHtml(block.id)}">${escapeHtml(block.text)}</textarea>
       <div class="pack-meta">
         <span data-pack-length="${escapeHtml(key)}">当前 ${block.currentLength} 字</span>
-        <span>${block.maxLength === null ? "平台未显示上限" : `上限 ${block.maxLength} 字`}</span>
+        <span>${block.maxLength === null ? "上限未知（平台未显示）" : `上限 ${block.maxLength} 字`}</span>
         <span class="status-pill ${block.valid ? "status-pass" : "status-fail"}" data-pack-valid="${escapeHtml(key)}">${block.valid ? "有效" : "需调整"}</span>
         <span class="status-pill ${block.verified ? "status-neutral" : "status-warning"}">${block.verified ? "规则已核验" : "平台限制未核验"}</span>
       </div>

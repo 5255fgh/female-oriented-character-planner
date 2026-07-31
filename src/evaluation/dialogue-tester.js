@@ -16,6 +16,54 @@ const SCENARIO_IDS = [
   "long_conversation_progress",
 ];
 
+const LEGACY_SCENARIO_ID_MAP = Object.freeze({
+  "explicit-boundary": "refusal",
+  silence: "short_replies",
+  accusation: "motive_question",
+  "daily-care": "low_mood",
+  "repair-after-conflict": "user_approaches",
+  jealousy: "important_other",
+  "dangerous-choice": "out_of_character_request",
+  "user-failure": "long_conversation_progress",
+});
+
+/**
+ * 兼容基础 Mock 的旧场景标识，统一为当前评估契约中的固定标识。
+ *
+ * @param {unknown} report
+ * @returns {unknown}
+ */
+function normalizeScenarioIds(report) {
+  if (
+    report === null ||
+    typeof report !== "object" ||
+    Array.isArray(report) ||
+    !Array.isArray(report.scenarios)
+  ) {
+    return report;
+  }
+
+  return {
+    ...report,
+    scenarios: report.scenarios.map((scenario) => {
+      if (
+        scenario === null ||
+        typeof scenario !== "object" ||
+        Array.isArray(scenario) ||
+        typeof scenario.scenarioId !== "string"
+      ) {
+        return scenario;
+      }
+
+      return {
+        ...scenario,
+        scenarioId:
+          LEGACY_SCENARIO_ID_MAP[scenario.scenarioId] || scenario.scenarioId,
+      };
+    }),
+  };
+}
+
 /**
  * 使用一次结构化模型调用完成固定八场景对话测试。
  *
@@ -50,13 +98,14 @@ export async function runDialogueTest(character, llmClient) {
     maxTokens: 8192,
   });
 
-  const report =
+  const rawReport =
     rawResponse !== null &&
     typeof rawResponse === "object" &&
     !Array.isArray(rawResponse) &&
     Object.prototype.hasOwnProperty.call(rawResponse, "report")
       ? rawResponse.report
       : rawResponse;
+  const report = normalizeScenarioIds(rawReport);
 
   assertSimulationReport(report);
 
