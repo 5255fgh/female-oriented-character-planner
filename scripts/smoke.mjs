@@ -316,41 +316,220 @@ async function runLLMClientSmoke() {
     "../src/llm/openai-compatible-client.js"
   );
   const originalFetch = globalThis.fetch;
-  let callCount = 0;
-  const requestBodies = [];
+  const retryMessage =
+    "只返回一个合法 JSON 值，不要使用 Markdown 代码围栏，不要添加解释文字。";
 
-  globalThis.fetch = async (_url, options) => {
-    callCount += 1;
-    requestBodies.push(JSON.parse(options.body));
-    const content = callCount === 1
-      ? "```json\n{\"ok\":true}\n```"
-      : "{\"ok\":true}";
-    return {
-      ok: true,
-      status: 200,
-      statusText: "OK",
-      async text() {
-        return JSON.stringify({ choices: [{ message: { content } }] });
-      },
+  function installFetchHarness(responses) {
+    const harness = {
+      callCount: 0,
+      requestBodies: [],
     };
-  };
 
-  try {
-    const client = createLLMClient({
+    globalThis.fetch = async (_url, options) => {
+      if (harness.callCount >= responses.length) {
+        throw new Error("LLM client 发起了未预期的额外请求");
+      }
+
+      const response = responses[harness.callCount];
+      harness.callCount += 1;
+      harness.requestBodies.push(JSON.parse(options.body));
+      const status = response.status ?? 200;
+      const payload = Object.prototype.hasOwnProperty.call(response, "payload")
+        ? response.payload
+        : { choices: [{ message: { content: response.content } }] };
+
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        statusText: response.statusText ?? (status === 200 ? "OK" : "Error"),
+        async text() {
+          return Object.prototype.hasOwnProperty.call(response, "rawText")
+            ? response.rawText
+            : JSON.stringify(payload);
+        },
+      };
+    };
+
+    return harness;
+  }
+
+  function createClient() {
+    return createLLMClient({
       endpoint: "https://example.invalid/chat/completions",
       model: "smoke-model",
     });
-    const result = await client.completeJson({
-      task: "raw-json-smoke",
+  }
+
+  async function assertSingleRequestParse(label, content, expected) {
+    const harness = installFetchHarness([{ content }]);
+    const result = await createClient().completeJson({
+      task: label,
       messages: [{ role: "user", content: "只返回原始 JSON" }],
     });
-    assert.deepEqual(result, { ok: true });
-    assert.equal(callCount, 2, "无效 JSON 最多只重试一次");
-    assert.equal(
-      requestBodies[1].messages.length,
-      2,
-      "Markdown 围栏必须视为无效并追加一次纠正消息",
+    assert.deepEqual(result, expected, `${label} 应解析为预期 JSON`);
+    assert.equal(harness.callCount, 1, `${label} 不应触发重试`);
+  }
+
+  try {
+    await assertSingleRequestParse(
+      "裸 JSON",
+      "\uFEFF  \n{\"ok\":true}\t",
+      { ok: true },
     );
+    await assertSingleRequestParse(
+      "json 代码围栏",
+      "```json\n{\"ok\":true}\n```",
+      { ok: true },
+    );
+    await assertSingleRequestParse(
+      "普通代码围栏",
+      "```\n{\"ok\":true}\n```",
+      { ok: true },
+    );
+    await assertSingleRequestParse(
+      "JSON 前后说明",
+      "说明 {不是JSON}\n{\"ok\":true}\n以上是结果。",
+      { ok: true },
+    );
+    await assertSingleRequestParse(
+      "嵌套 JSON",
+      '{"outer":{"items":[1,{"ready":true}]}}',
+      { outer: { items: [1, { ready: true }] } },
+    );
+    await assertSingleRequestParse(
+      "数组 JSON",
+      '[{"id":1},[2,3]]',
+      [{ id: 1 }, [2, 3]],
+    );
+    await assertSingleRequestParse(
+      "字符串中含大括号",
+      '{"text":"保留 {大括号} 与 [中括号]"}',
+      { text: "保留 {大括号} 与 [中括号]" },
+    );
+    await assertSingleRequestParse(
+      "字符串中含转义引号",
+      '{"text":"她说：\\\"继续前进\\\"","path":"C:\\\\temp"}',
+      { text: '她说："继续前进"', path: "C:\\temp" },
+    );
+    await assertSingleRequestParse(
+      "content 数组",
+      [
+        { type: "text", text: '{"ok":tr' },
+        { type: "text", text: "ue}" },
+      ],
+      { ok: true },
+    );
+
+    const retryHarness = installFetchHarness([
+      { content: "这不是 JSON" },
+      { content: '{"ok":true}' },
+    ]);
+    const retriedResult = await createClient().completeJson({
+      task: "retry-once",
+      messages: [{ role: "user", content: "返回 JSON" }],
+    });
+    assert.deepEqual(retriedResult, { ok: true }, "第二次合法响应应成功解析");
+    assert.equal(retryHarness.callCount, 2, "解析失败后必须且只能重试一次");
+    assert.equal(
+      retryHarness.requestBodies[1].messages.length,
+      2,
+      "重试请求必须在原消息后追加纠正消息",
+    );
+    assert.deepEqual(
+      retryHarness.requestBodies[1].messages.at(-1),
+      { role: "user", content: retryMessage },
+      "重试必须使用指定的 JSON 纠正消息",
+    );
+
+    const emptyHarness = installFetchHarness([
+      { content: "" },
+      { content: "  \n\t" },
+    ]);
+    await assert.rejects(
+      createClient().completeJson({
+        task: "empty-content",
+        messages: [{ role: "user", content: "返回 JSON" }],
+      }),
+      /LLM JSON parsing failed after 2 attempts:.*empty/i,
+      "连续空 content 必须抛出清晰错误",
+    );
+    assert.equal(emptyHarness.callCount, 2, "空 content 最多重试一次");
+
+    const invalidHarness = installFetchHarness([
+      { content: "完全非法的文本" },
+      { content: "仍然不是 JSON" },
+    ]);
+    await assert.rejects(
+      createClient().completeJson({
+        task: "invalid-content",
+        messages: [{ role: "user", content: "返回 JSON" }],
+      }),
+      /LLM JSON parsing failed after 2 attempts:.*valid JSON value/i,
+      "连续两次非法文本必须抛出清晰错误",
+    );
+    assert.equal(
+      invalidHarness.callCount,
+      2,
+      "连续两次解析失败后不得发起第三次请求",
+    );
+
+    const secret = `sk-${"a".repeat(32)}`;
+    const upstreamHarness = installFetchHarness([
+      {
+        status: 429,
+        statusText: "Too Many Requests",
+        payload: {
+          error: {
+            message: `Authorization: Bearer ${secret} ${"x".repeat(700)}`,
+            type: "rate_limit_error",
+            code: "rate_limit_exceeded",
+          },
+          details: "完整敏感响应不得进入错误消息",
+        },
+      },
+    ]);
+    let upstreamError;
+    try {
+      await createClient().completeJson({
+        task: "upstream-error",
+        messages: [{ role: "user", content: "返回 JSON" }],
+      });
+    } catch (error) {
+      upstreamError = error;
+    }
+    assert.ok(upstreamError instanceof Error, "服务端 error 对象必须抛出 Error");
+    assert.match(upstreamError.message, /status 429/);
+    assert.match(upstreamError.message, /rate_limit_error/);
+    assert.match(upstreamError.message, /rate_limit_exceeded/);
+    assert.doesNotMatch(upstreamError.message, new RegExp(secret));
+    assert.doesNotMatch(upstreamError.message, /完整敏感响应/);
+    assert.ok(
+      upstreamError.message.length <= 550,
+      "服务端错误摘要不得超过 500 字符（不含固定错误前缀）",
+    );
+    assert.equal(upstreamHarness.callCount, 1, "服务端 error 对象不得触发解析重试");
+
+    const successErrorHarness = installFetchHarness([
+      {
+        status: 200,
+        payload: {
+          error: {
+            message: "provider rejected request",
+            type: "invalid_request_error",
+            code: "bad_request",
+          },
+        },
+      },
+    ]);
+    await assert.rejects(
+      createClient().completeJson({
+        task: "error-object-with-200",
+        messages: [{ role: "user", content: "返回 JSON" }],
+      }),
+      /provider rejected request.*invalid_request_error.*bad_request/,
+      "HTTP 200 中的服务端 error 对象也必须优先报告",
+    );
+    assert.equal(successErrorHarness.callCount, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
