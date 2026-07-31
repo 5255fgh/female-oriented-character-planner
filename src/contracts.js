@@ -249,31 +249,13 @@ const CHARACTER_DRAFT_KEYS = [
 ];
 
 const REPORT_STATUSES = ["pass", "warning", "fail"];
-const IMAGE_STYLE_SUGGESTIONS = ["通用", "像素画", "言情漫画", "细腻厚涂"];
 const BLOCKED_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
-
-const PLATFORM_FLOW_DEFINITIONS = {
-  free_character: [
-    { id: "characterPrompt", maxLength: 1000, verified: true },
-  ],
-  dead_rival: [
-    { id: "rivalSetting", maxLength: 300, verified: true },
-    { id: "history", maxLength: null, verified: false },
-    { id: "other", maxLength: null, verified: false },
-  ],
-  image_shape: [
-    { id: "imagePrompt", maxLength: null, verified: false },
-    {
-      id: "styleSuggestion",
-      maxLength: null,
-      verified: true,
-      allowedValues: IMAGE_STYLE_SUGGESTIONS,
-    },
-  ],
-  open_story: [
-    { id: "storyPrompt", maxLength: 10000, verified: true },
-  ],
-};
+const PLATFORM_FLOW_IDS = [
+  "free_character",
+  "dead_rival",
+  "image_shape",
+  "open_story",
+];
 
 /**
  * @param {string} path
@@ -715,23 +697,10 @@ function validatePlatformPack(value, path) {
   const pack = assertObject(value, path);
   assertExactKeys(pack, ["platform", "flowId", "blocks", "generatedAt"], path);
   assertEnum(pack.platform, ["maoxiang"], `${path}.platform`);
-  const flowId = assertString(pack.flowId, `${path}.flowId`);
-  const flowDefinition = Object.prototype.hasOwnProperty.call(
-    PLATFORM_FLOW_DEFINITIONS,
-    flowId,
-  )
-    ? PLATFORM_FLOW_DEFINITIONS[flowId]
-    : null;
-  if (!flowDefinition) {
-    fail(
-      `${path}.flowId`,
-      `expected one of: ${Object.keys(PLATFORM_FLOW_DEFINITIONS).join(", ")}`,
-    );
-  }
+  assertEnum(pack.flowId, PLATFORM_FLOW_IDS, `${path}.flowId`);
 
   const blocks = assertArray(pack.blocks, `${path}.blocks`);
   const blockIds = new Set();
-  const blocksById = new Map();
   for (let index = 0; index < blocks.length; index += 1) {
     const blockPath = `${path}.blocks[${index}]`;
     const block = assertObject(blocks[index], blockPath);
@@ -762,54 +731,17 @@ function validatePlatformPack(value, path) {
     }
     assertBoolean(block.valid, `${blockPath}.valid`);
     assertBoolean(block.verified, `${blockPath}.verified`);
+    if (
+      typeof block.maxLength === "number" &&
+      currentLength > block.maxLength &&
+      block.valid
+    ) {
+      fail(`${blockPath}.valid`, "expected false when currentLength exceeds maxLength");
+    }
     if (blockIds.has(block.id)) {
       fail(`${blockPath}.id`, "expected a unique block id");
     }
     blockIds.add(block.id);
-    blocksById.set(block.id, { block, blockPath, currentLength });
-  }
-
-  if (blocks.length !== flowDefinition.length) {
-    fail(
-      `${path}.blocks`,
-      `expected exactly ${flowDefinition.length} blocks for flow "${flowId}"`,
-    );
-  }
-
-  for (const expectedBlock of flowDefinition) {
-    const blockEntry = blocksById.get(expectedBlock.id);
-    if (!blockEntry) {
-      fail(
-        `${path}.blocks`,
-        `expected block "${expectedBlock.id}" for flow "${flowId}"`,
-      );
-    }
-
-    const { block, blockPath, currentLength } = blockEntry;
-    if (block.maxLength !== expectedBlock.maxLength) {
-      fail(
-        `${blockPath}.maxLength`,
-        `expected ${String(expectedBlock.maxLength)} for block "${expectedBlock.id}"`,
-      );
-    }
-    if (block.verified !== expectedBlock.verified) {
-      fail(
-        `${blockPath}.verified`,
-        `expected ${expectedBlock.verified} for block "${expectedBlock.id}"`,
-      );
-    }
-
-    const lengthValid =
-      expectedBlock.maxLength === null || currentLength <= expectedBlock.maxLength;
-    const enumValid =
-      !expectedBlock.allowedValues || expectedBlock.allowedValues.includes(block.text);
-    const expectedValid = lengthValid && enumValid;
-    if (block.valid !== expectedValid) {
-      fail(
-        `${blockPath}.valid`,
-        `expected ${expectedValid} for the current block text`,
-      );
-    }
   }
   assertString(pack.generatedAt, `${path}.generatedAt`);
 }
