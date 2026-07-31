@@ -1,0 +1,110 @@
+:root {
+  color: #2e2430;
+  background: #f7f1f4;
+  font-family:
+    Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(213, 164, 185, 0.28), transparent 42%),
+    linear-gradient(145deg, #fbf8f9 0%, #f0e6ec 100%);
+}
+
+#app {
+  width: min(100%, 680px);
+  padding: clamp(32px, 7vw, 64px);
+  border: 1px solid rgba(115, 75, 94, 0.15);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 24px 70px rgba(85, 51, 68, 0.12);
+  backdrop-filter: blur(16px);
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  color: #4a2d3c;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: clamp(2rem, 6vw, 3.4rem);
+  font-weight: 600;
+  line-height: 1.16;
+  letter-spacing: -0.035em;
+}
+
+p {
+  margin: 0;
+}
+
+.status {
+  width: fit-content;
+  margin: 28px auto 0;
+  padding: 7px 13px;
+  border-radius: 999px;
+  color: #71425a;
+  background: #f5e4ec;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.model {
+  margin-top: 18px;
+  color: #73626b;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+button {
+  min-height: 48px;
+  margin-top: 32px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: #62384e;
+  box-shadow: 0 10px 26px rgba(98, 56, 78, 0.24);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: #76465f;
+  box-shadow: 0 14px 30px rgba(98, 56, 78, 0.3);
+}
+
+button:focus-visible {
+  outline: 3px solid rgba(118, 70, 95, 0.3);
+  outline-offset: 4px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+}

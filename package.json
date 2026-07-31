@@ -1,0 +1,16 @@
+{
+  "name": "female-oriented-character-planner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}
