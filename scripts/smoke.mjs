@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "vite";
+import { runFoundationArchitectureSmoke } from "./smoke/foundation-architecture.mjs";
+import { runFoundationContractSmoke } from "./smoke/foundation-contracts.mjs";
+import { runFoundationWorkflowSmoke } from "./smoke/foundation-workflow.mjs";
 
 const IMAGE_STYLES = ["通用", "像素画", "言情漫画", "细腻厚涂"];
 
@@ -141,7 +144,9 @@ async function runBusinessFlowSmoke() {
   try {
     // 通过 Vite SSR 加载，确保业务模块中的 Markdown ?raw 导入真实可用。
     const contracts = await vite.ssrLoadModule("/src/contracts.js");
-    const { createEmptyBrief } = await vite.ssrLoadModule("/src/app-state.js");
+    const { createEmptyBrief, createInitialAppState } = await vite.ssrLoadModule(
+      "/src/app-state.js",
+    );
     const { createMockLLMClient } = await vite.ssrLoadModule(
       "/src/mock/mock-llm-client.js",
     );
@@ -166,6 +171,7 @@ async function runBusinessFlowSmoke() {
     const { validatePlatformPack } = await vite.ssrLoadModule(
       "/src/platforms/maoxiang/pack-validator.js",
     );
+    const { renderApp } = await vite.ssrLoadModule("/src/ui/renderers.js");
 
     const brief = {
       ...createEmptyBrief(),
@@ -312,7 +318,7 @@ async function runBusinessFlowSmoke() {
     assert.equal(editedPack.blocks[0].valid, false, "超限输入必须标记为无效");
 
     const timestamp = new Date().toISOString();
-    contracts.assertCharacterProject({
+    const completeProject = {
       id: "project-smoke",
       title: "Mock 全流程",
       brief,
@@ -324,7 +330,19 @@ async function runBusinessFlowSmoke() {
       platformPacks: [freeCharacterPack, deadRivalPack, imageShapePack],
       createdAt: timestamp,
       updatedAt: timestamp,
-    });
+    };
+    contracts.assertCharacterProject(completeProject);
+
+    const renderState = createInitialAppState();
+    renderState.project = completeProject;
+    renderState.selectedConceptId = concepts[0].id;
+    renderState.savedProjects = [completeProject];
+    renderState.fieldInstructions = {};
+    for (let step = 0; step <= 6; step += 1) {
+      renderState.currentStep = step;
+      const html = renderApp(renderState, { model: "smoke-model" });
+      assert.match(html, /角色策划与猫箱输入包生成器/, `步骤 ${step} 应可完成字符串渲染`);
+    }
   } finally {
     await vite.close();
   }
@@ -911,6 +929,9 @@ async function runLLMClientSmoke() {
 }
 
 async function runSmoke() {
+  await runFoundationArchitectureSmoke();
+  await runFoundationContractSmoke();
+  await runFoundationWorkflowSmoke();
   await runContractAndMockSmoke();
   await runBusinessFlowSmoke();
   await runLLMClientSmoke();
