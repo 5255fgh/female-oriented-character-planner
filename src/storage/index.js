@@ -1,5 +1,16 @@
 export { openDatabase, requestToPromise, transactionDone } from "./indexeddb.js";
 export {
+  createAutosaveService,
+  DEFAULT_AUTOSAVE_DELAY,
+} from "./autosave.js";
+export {
+  CURRENT_APP_VERSION,
+  CURRENT_SCHEMA_VERSION,
+  migrateLegacyCharacterProject,
+  migrateProjectJson,
+  migrateStoredProject,
+} from "./migrations.js";
+export {
   deleteProject,
   getProject,
   listProjects,
