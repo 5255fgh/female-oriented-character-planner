@@ -2,18 +2,24 @@ import maoxiangPackPrompt from "../../../prompts/maoxiang-pack.md?raw";
 import {
   assertCharacterDraft,
   assertPlatformPack,
-  countUnicodeCharacters,
+  assertProjectDocument,
 } from "../../contracts.js";
-import { MAOXIANG_FLOWS } from "./config.js";
-import { validatePlatformPack } from "./pack-validator.js";
+import { adaptMaoxiangFields } from "./adapters.js";
+import {
+  MAOXIANG_ADAPTER_FLOW_IDS,
+  MAOXIANG_FLOW_STATUS,
+  getMaoxiangRules,
+} from "./rules.js";
+import {
+  validateMaoxiangFields,
+  validatePlatformPack,
+} from "./pack-validator.js";
 
-const TASK_BY_FLOW = Object.freeze({
+const TASK_BY_LEGACY_FLOW = Object.freeze({
   free_character: "maoxiang-free-character",
   dead_rival: "maoxiang-dead-rival",
   image_shape: "maoxiang-image-shape",
 });
-
-const COMPRESSIBLE_BLOCK_IDS = new Set(["characterPrompt", "rivalSetting"]);
 const DEFAULT_IMAGE_STYLE = "通用";
 
 /**
@@ -24,205 +30,219 @@ function isPlainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
 /**
- * @param {string} flowId
- * @returns {Record<string, unknown>}
+ * @param {unknown} options
+ * @returns {{signal?: AbortSignal}}
  */
-function getEnabledFlow(flowId) {
-  if (!Object.prototype.hasOwnProperty.call(MAOXIANG_FLOWS, flowId)) {
-    throw new Error(`猫箱入口 flowId "${String(flowId)}" 不存在。`);
+function assertOptions(options) {
+  if (options === undefined) {
+    return {};
   }
+  if (!isPlainObject(options)) {
+    throw new Error("options: expected an object");
+  }
+  for (const key of Object.keys(options)) {
+    if (key !== "signal") {
+      throw new Error(`options.${key}: unexpected field`);
+    }
+  }
+  if (
+    options.signal !== undefined &&
+    (options.signal === null || typeof options.signal !== "object")
+  ) {
+    throw new Error("options.signal: expected an AbortSignal");
+  }
+  return /** @type {{signal?: AbortSignal}} */ (options);
+}
 
-  if (flowId === "open_story") {
-    throw new Error("猫箱 open_story 入口在 MVP 中已禁用，不能生成开放故事输入包。");
+/** @param {AbortSignal | undefined} signal */
+function throwIfAborted(signal) {
+  if (!signal?.aborted) {
+    return;
   }
-
-  const flow = MAOXIANG_FLOWS[flowId];
-  if (!flow.enabled) {
-    throw new Error(`猫箱入口 "${flowId}" 当前未启用。`);
+  if (typeof signal.throwIfAborted === "function") {
+    signal.throwIfAborted();
   }
-  return flow;
+  throw new Error("PlatformPack: generation aborted");
 }
 
 /**
- * @param {Record<string, unknown>} flow
- * @returns {Array<[string, Record<string, unknown>]>}
+ * @param {string} flowId
+ * @param {Record<string, string>} fieldValues
+ * @param {string} [generatedAt]
+ * @returns {import("../../contracts.js").PlatformPack}
  */
-function getFieldEntries(flow) {
-  return Object.entries(flow).filter(([key]) => key !== "enabled");
+function createPack(flowId, fieldValues, generatedAt = new Date().toISOString()) {
+  return validatePlatformPack({
+    platform: "maoxiang",
+    flowId,
+    blocks: validateMaoxiangFields(flowId, fieldValues),
+    generatedAt,
+  });
 }
 
 /**
  * @param {unknown} response
  * @param {string} flowId
- * @param {Array<[string, Record<string, unknown>]>} requestedFields
- * @returns {Record<string, unknown>}
+ * @param {string[]} requestedIds
+ * @returns {Record<string, string>}
  */
-function extractFlowContent(response, flowId, requestedFields) {
+function extractModelFields(response, flowId, requestedIds) {
   if (!isPlainObject(response)) {
     throw new Error("模型响应必须是 JSON 对象。");
   }
 
   if (Array.isArray(response.blocks)) {
-    assertPlatformPack(response);
-    if (response.platform !== "maoxiang" || response.flowId !== flowId) {
+    const responsePack = assertPlatformPack(response);
+    if (responsePack.platform !== "maoxiang" || responsePack.flowId !== flowId) {
       throw new Error(`模型返回了错误的猫箱入口，期望 "${flowId}"。`);
     }
-
-    const blocksById = new Map(response.blocks.map((block) => [block.id, block.text]));
-    const content = {};
-    for (const [fieldId] of requestedFields) {
-      if (!blocksById.has(fieldId)) {
+    const byId = new Map(responsePack.blocks.map((block) => [block.id, block.text]));
+    const fields = {};
+    for (const fieldId of requestedIds) {
+      if (!byId.has(fieldId)) {
         throw new Error(`模型响应缺少字段 "${fieldId}"。`);
       }
-      content[fieldId] = blocksById.get(fieldId);
+      fields[fieldId] = byId.get(fieldId);
     }
-    return content;
+    return /** @type {Record<string, string>} */ (fields);
   }
 
-  const requestedIds = new Set(requestedFields.map(([fieldId]) => fieldId));
+  const requested = new Set(requestedIds);
   for (const key of Object.keys(response)) {
-    if (!requestedIds.has(key)) {
+    if (!requested.has(key)) {
       throw new Error(`模型响应包含当前请求未允许的字段 "${key}"。`);
     }
   }
 
-  const content = {};
-  for (const [fieldId, fieldConfig] of requestedFields) {
-    const hasField = Object.prototype.hasOwnProperty.call(response, fieldId);
-    const canUseStyleFallback = flowId === "image_shape" && fieldId === "styleSuggestion";
-
-    if (!hasField) {
-      if (canUseStyleFallback) {
-        content[fieldId] = DEFAULT_IMAGE_STYLE;
+  const fields = {};
+  const rules = getMaoxiangRules(flowId);
+  for (const fieldId of requestedIds) {
+    if (!Object.prototype.hasOwnProperty.call(response, fieldId)) {
+      if (flowId === "image_shape" && fieldId === "styleSuggestion") {
+        fields[fieldId] = DEFAULT_IMAGE_STYLE;
         continue;
       }
-      if (fieldConfig.required) {
-        throw new Error(`模型响应缺少必填字段 "${fieldId}"。`);
+      if (!rules[fieldId].required) {
+        fields[fieldId] = "";
+        continue;
       }
-      content[fieldId] = "";
-      continue;
+      throw new Error(`模型响应缺少必填字段 "${fieldId}"。`);
     }
-
-    const value = response[fieldId];
-    if (canUseStyleFallback) {
-      content[fieldId] = value;
-      continue;
-    }
-    if (typeof value !== "string") {
+    if (typeof response[fieldId] !== "string") {
       throw new Error(`模型响应字段 "${fieldId}" 必须是字符串。`);
     }
-    content[fieldId] = value;
-  }
-  return content;
-}
-
-/**
- * @param {Record<string, unknown>} content
- * @param {Array<[string, Record<string, unknown>]>} fieldEntries
- */
-function normalizeImageStyle(content, fieldEntries) {
-  const styleEntry = fieldEntries.find(([fieldId]) => fieldId === "styleSuggestion");
-  if (!styleEntry) {
-    return;
+    fields[fieldId] = response[fieldId];
   }
 
-  const allowedValues = styleEntry[1].allowedValues;
-  if (!Array.isArray(allowedValues) || !allowedValues.includes(content.styleSuggestion)) {
-    content.styleSuggestion = DEFAULT_IMAGE_STYLE;
+  if (
+    flowId === "image_shape" &&
+    !rules.styleSuggestion.allowedValues.includes(fields.styleSuggestion)
+  ) {
+    fields.styleSuggestion = DEFAULT_IMAGE_STYLE;
   }
-}
-
-/**
- * @param {Record<string, unknown>} content
- * @param {Array<[string, Record<string, unknown>]>} fieldEntries
- * @returns {import("../../contracts.js").PlatformBlock[]}
- */
-function createBlocks(content, fieldEntries) {
-  return fieldEntries.map(([id, fieldConfig]) => {
-    const text = content[id];
-    if (typeof text !== "string") {
-      throw new Error(`模型响应字段 "${id}" 必须是字符串。`);
-    }
-
-    const currentLength = countUnicodeCharacters(text);
-    const lengthValid =
-      fieldConfig.maxLength === null || currentLength <= fieldConfig.maxLength;
-    const enumValid =
-      !fieldConfig.allowedValues || fieldConfig.allowedValues.includes(text);
-
-    return {
-      id,
-      label: fieldConfig.label,
-      text,
-      maxLength: fieldConfig.maxLength,
-      currentLength,
-      valid: lengthValid && enumValid,
-      verified: fieldConfig.verified,
-    };
-  });
+  return /** @type {Record<string, string>} */ (fields);
 }
 
 /**
  * @param {object} character
  * @param {string} flowId
  * @param {string} task
- * @param {Array<[string, Record<string, unknown>]>} fieldEntries
  * @param {{completeJson(request: object): Promise<object>}} llmClient
- * @returns {Promise<Record<string, unknown>>}
+ * @returns {Promise<Record<string, string>>}
  */
-async function requestMainContent(character, flowId, task, fieldEntries, llmClient) {
-  const response = await llmClient.completeJson({
-    task,
-    messages: [
-      { role: "system", content: maoxiangPackPrompt },
-      {
-        role: "user",
-        content: JSON.stringify({ flowId, characterDraft: character }),
-      },
-    ],
-    temperature: 0.4,
-    maxTokens: 4096,
-  });
-  const content = extractFlowContent(response, flowId, fieldEntries);
-  if (flowId === "image_shape") {
-    normalizeImageStyle(content, fieldEntries);
+async function requestLegacyFields(character, flowId, task, llmClient) {
+  const requestedIds = Object.keys(getMaoxiangRules(flowId));
+  const messages = [
+    { role: "system", content: maoxiangPackPrompt },
+    {
+      role: "user",
+      content: JSON.stringify({ flowId, characterDraft: character }),
+    },
+  ];
+
+  let validationError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const requestMessages = attempt === 0
+      ? messages
+      : [
+          ...messages,
+          {
+            role: "user",
+            content: `上一响应无效：${validationError.message}。请仅重试一次，只返回要求的字段 JSON。`,
+          },
+        ];
+    const response = await llmClient.completeJson({
+      task,
+      messages: requestMessages,
+      temperature: 0.4,
+      maxTokens: 4096,
+    });
+    try {
+      return extractModelFields(response, flowId, requestedIds);
+    } catch (error) {
+      validationError = /** @type {Error} */ (error);
+      if (attempt === 1) {
+        throw validationError;
+      }
+    }
   }
-  return content;
+  throw validationError;
 }
 
-/**
- * @param {import("../../contracts.js").PlatformPack} pack
- * @returns {import("../../contracts.js").PlatformBlock[]}
- */
-function findOverLimitBlocks(pack) {
+/** @param {import("../../contracts.js").PlatformPack} pack */
+function findKnownOverLimitBlocks(pack) {
   return pack.blocks.filter(
     (block) =>
-      COMPRESSIBLE_BLOCK_IDS.has(block.id) &&
       typeof block.maxLength === "number" &&
       block.currentLength > block.maxLength,
   );
 }
 
 /**
+ * @param {unknown} response
+ * @param {string[]} requestedIds
+ * @returns {Record<string, string>}
+ */
+function extractCompressedFields(response, requestedIds) {
+  if (!isPlainObject(response)) {
+    throw new Error("压缩响应必须是 JSON 对象");
+  }
+  const requested = new Set(requestedIds);
+  for (const key of Object.keys(response)) {
+    if (!requested.has(key)) {
+      throw new Error(`压缩响应包含未请求字段 "${key}"`);
+    }
+  }
+  const fields = {};
+  for (const fieldId of requestedIds) {
+    if (typeof response[fieldId] !== "string") {
+      throw new Error(`压缩响应字段 "${fieldId}" 必须是字符串`);
+    }
+    fields[fieldId] = response[fieldId];
+  }
+  return /** @type {Record<string, string>} */ (fields);
+}
+
+/**
+ * 每个输入包至多发起一次压缩请求；结果仍超限时保留全文并标记无效。
+ *
  * @param {import("../../contracts.js").PlatformPack} pack
- * @param {string} task
- * @param {Record<string, unknown>} flow
  * @param {{completeJson(request: object): Promise<object>}} llmClient
+ * @param {AbortSignal | undefined} signal
  * @returns {Promise<import("../../contracts.js").PlatformPack>}
  */
-async function compressOverLimitBlocks(pack, task, flow, llmClient) {
-  const overLimitBlocks = findOverLimitBlocks(pack);
+async function compressKnownOverLimitFields(pack, llmClient, signal) {
+  const overLimitBlocks = findKnownOverLimitBlocks(pack);
   if (overLimitBlocks.length === 0) {
     return pack;
   }
 
-  const requestedFields = overLimitBlocks.map((block) => [block.id, flow[block.id]]);
+  throwIfAborted(signal);
   const fields = Object.fromEntries(
     overLimitBlocks.map((block) => [
       block.id,
@@ -233,53 +253,80 @@ async function compressOverLimitBlocks(pack, task, flow, llmClient) {
       },
     ]),
   );
-  const response = await llmClient.completeJson({
-    task,
+  const request = {
+    task: "maoxiang-compress-fields",
     messages: [
       { role: "system", content: maoxiangPackPrompt },
       {
         role: "user",
         content: JSON.stringify({
-          operation: "compress-over-limit-fields",
+          operation: "compress-known-over-limit-fields-once",
           flowId: pack.flowId,
           instruction:
-            "只压缩列出的超限字段。每个字段都必须从 currentLength 压缩到不超过 targetMaxLength；只返回这些字段组成的 JSON 对象。",
+            "只压缩列出的已知超限字段，保留原意；只返回这些字段组成的 JSON 对象，不得返回完整输入包。",
           fields,
         }),
       },
     ],
     temperature: 0.2,
     maxTokens: 4096,
-  });
-  const compressedContent = extractFlowContent(response, pack.flowId, requestedFields);
-
-  const compressedPack = {
-    ...pack,
-    blocks: pack.blocks.map((block) => {
-      if (!Object.prototype.hasOwnProperty.call(compressedContent, block.id)) {
-        return { ...block };
-      }
-      return {
-        ...block,
-        text: compressedContent[block.id],
-      };
-    }),
   };
-  return validatePlatformPack({
-    ...compressedPack,
-    blocks: compressedPack.blocks.map((block) => {
-      const currentLength = countUnicodeCharacters(block.text);
-      return {
-        ...block,
-        currentLength,
-        valid: block.maxLength === null || currentLength <= block.maxLength,
-      };
-    }),
-  });
+  if (signal !== undefined) {
+    request.signal = signal;
+  }
+  const response = await llmClient.completeJson(request);
+
+  let compressedFields;
+  try {
+    compressedFields = extractCompressedFields(
+      response,
+      overLimitBlocks.map((block) => block.id),
+    );
+  } catch {
+    return pack;
+  }
+
+  const nextBlocks = pack.blocks.map((block) => ({
+    ...block,
+    text: Object.prototype.hasOwnProperty.call(compressedFields, block.id)
+      ? compressedFields[block.id]
+      : block.text,
+  }));
+  return validatePlatformPack({ ...pack, blocks: nextBlocks });
 }
 
 /**
- * 生成指定入口的猫箱输入包；只返回数据，不操作 UI、浏览器或持久化。
+ * v2 统一项目适配器，支持五种声明式猫箱入口。
+ *
+ * @param {import("../../contracts.js").ProjectDocument} project
+ * @param {string} flowId
+ * @param {{completeJson(request: object): Promise<object>}} llmClient
+ * @param {{signal?: AbortSignal}} [options]
+ * @returns {Promise<import("../../contracts.js").PlatformPack>}
+ */
+export async function createMaoxiangPack(project, flowId, llmClient, options) {
+  assertProjectDocument(project);
+  if (!MAOXIANG_ADAPTER_FLOW_IDS.includes(flowId)) {
+    throw new Error(
+      `flowId: expected one of ${MAOXIANG_ADAPTER_FLOW_IDS.join(", ")}`,
+    );
+  }
+  if (!MAOXIANG_FLOW_STATUS[flowId].enabled) {
+    throw new Error(`猫箱入口 "${flowId}" 当前未启用。`);
+  }
+  if (!llmClient || typeof llmClient.completeJson !== "function") {
+    throw new Error("llmClient.completeJson: expected a function");
+  }
+  const { signal } = assertOptions(options);
+  throwIfAborted(signal);
+
+  const fieldValues = adaptMaoxiangFields(project, flowId);
+  const pack = createPack(flowId, fieldValues);
+  return compressKnownOverLimitFields(pack, llmClient, signal);
+}
+
+/**
+ * 兼容现有角色入口；只返回数据，不操作 UI、浏览器或持久化。
  *
  * @param {import("../../contracts.js").CharacterDraft} character
  * @param {string} flowId
@@ -288,29 +335,22 @@ async function compressOverLimitBlocks(pack, task, flow, llmClient) {
  */
 export async function generateMaoxiangPack(character, flowId, llmClient) {
   assertCharacterDraft(character);
-  const flow = getEnabledFlow(flowId);
-  const task = TASK_BY_FLOW[flowId];
+  const task = TASK_BY_LEGACY_FLOW[flowId];
   if (!task) {
-    throw new Error(`猫箱入口 "${flowId}" 没有可用的生成任务。`);
+    throw new Error(
+      `猫箱兼容入口仅支持 ${Object.keys(TASK_BY_LEGACY_FLOW).join(", ")}。`,
+    );
   }
   if (!llmClient || typeof llmClient.completeJson !== "function") {
     throw new Error("llmClient.completeJson: expected a function");
   }
 
-  const fieldEntries = getFieldEntries(flow);
-  const content = await requestMainContent(
+  const fieldValues = await requestLegacyFields(
     character,
     flowId,
     task,
-    fieldEntries,
     llmClient,
   );
-  const pack = validatePlatformPack({
-    platform: "maoxiang",
-    flowId,
-    blocks: createBlocks(content, fieldEntries),
-    generatedAt: new Date().toISOString(),
-  });
-
-  return compressOverLimitBlocks(pack, task, flow, llmClient);
+  const pack = createPack(flowId, fieldValues);
+  return compressKnownOverLimitFields(pack, llmClient, undefined);
 }

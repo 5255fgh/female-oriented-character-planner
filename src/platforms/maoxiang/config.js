@@ -1,5 +1,11 @@
+import {
+  MAOXIANG_FIELD_LABELS,
+  MAOXIANG_FLOW_STATUS,
+  MAOXIANG_RULES,
+} from "./rules.js";
+
 /**
- * 递归冻结猫箱入口配置，避免字段定义在运行时被修改。
+ * 递归冻结兼容配置，避免旧 UI 接口改写规则。
  *
  * @template {object} T
  * @param {T} value
@@ -11,64 +17,28 @@ function deepFreeze(value) {
       deepFreeze(child);
     }
   }
-
   return Object.freeze(value);
 }
 
-export const MAOXIANG_FLOWS = deepFreeze({
-  free_character: {
-    enabled: true,
-    characterPrompt: {
-      label: "输入你想创建的角色",
-      maxLength: 1000,
-      verified: true,
-      required: true,
-    },
-  },
-  dead_rival: {
-    enabled: true,
-    rivalSetting: {
-      label: "死对头的设定",
-      maxLength: 300,
-      verified: true,
-      required: true,
-    },
-    history: {
-      label: "历史纠葛",
-      maxLength: null,
-      verified: false,
-      required: true,
-    },
-    other: {
-      label: "其他（选填）",
-      maxLength: null,
-      verified: false,
-      required: false,
-    },
-  },
-  image_shape: {
-    enabled: true,
-    imagePrompt: {
-      label: "输入你脑海中的形象",
-      maxLength: null,
-      verified: false,
-      required: true,
-    },
-    styleSuggestion: {
-      label: "推荐风格",
-      maxLength: null,
-      verified: true,
-      required: true,
-      allowedValues: ["通用", "像素画", "言情漫画", "细腻厚涂"],
-    },
-  },
-  open_story: {
-    enabled: false,
-    storyPrompt: {
-      label: "开放故事",
-      maxLength: 10000,
-      verified: true,
-      required: true,
-    },
-  },
-});
+/**
+ * 兼容现有调用方的配置视图；所有验证字段均派生自 rules.js。
+ */
+export const MAOXIANG_FLOWS = deepFreeze(
+  Object.fromEntries(
+    Object.entries(MAOXIANG_RULES).map(([flowId, fieldRules]) => [
+      flowId,
+      {
+        enabled: MAOXIANG_FLOW_STATUS[flowId].enabled,
+        ...Object.fromEntries(
+          Object.entries(fieldRules).map(([fieldId, rule]) => [
+            fieldId,
+            {
+              label: MAOXIANG_FIELD_LABELS[flowId][fieldId],
+              ...rule,
+            },
+          ]),
+        ),
+      },
+    ]),
+  ),
+);
