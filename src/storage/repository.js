@@ -1,4 +1,4 @@
-import { assertCharacterProject, createId } from "../contracts.js";
+import { assertProjectDocument, createId } from "../contracts.js";
 import { deepClone } from "./clone.js";
 import { openDatabase, requestToPromise, transactionDone } from "./indexeddb.js";
 
@@ -21,37 +21,26 @@ function assertStringId(value, label) {
 }
 
 function prepareProject(project) {
-  if (project === null || typeof project !== "object" || Array.isArray(project)) {
-    assertCharacterProject(project);
-  }
+  assertProjectDocument(project);
 
   const timestamp = new Date().toISOString();
-  const prepared = { ...project };
-  const hasId =
-    Object.prototype.hasOwnProperty.call(prepared, "id") &&
-    prepared.id !== undefined &&
-    prepared.id !== null &&
-    prepared.id !== "";
-
-  if (!hasId) {
-    prepared.id = createId("project");
-  }
+  const prepared = deepClone(project);
   prepared.updatedAt = timestamp;
 
-  assertCharacterProject(prepared);
+  assertProjectDocument(prepared);
   const cloned = deepClone(prepared);
-  assertCharacterProject(cloned);
-  return { project: cloned, timestamp };
+  assertProjectDocument(cloned);
+  return { project: cloned };
 }
 
 function prepareVersionSnapshot(projectId, snapshot) {
-  assertCharacterProject(snapshot);
+  assertProjectDocument(snapshot);
   if (snapshot.id !== projectId) {
     throw new Error("版本快照与项目不匹配");
   }
 
   const cloned = deepClone(snapshot);
-  assertCharacterProject(cloned);
+  assertProjectDocument(cloned);
   return cloned;
 }
 
@@ -102,7 +91,7 @@ function assertStoredVersion(record) {
     throw new Error("版本记录无效");
   }
 
-  assertCharacterProject(record.snapshot);
+  assertProjectDocument(record.snapshot);
   if (record.snapshot.id !== record.projectId) {
     throw new Error("版本快照与项目不匹配");
   }
@@ -129,16 +118,13 @@ function queueVersionSave(transaction, projectId, snapshot, createdAt) {
         return;
       }
 
-      for (const version of versions) {
-        if (
-          version === null ||
-          typeof version !== "object" ||
-          typeof version.id !== "string" ||
-          typeof version.createdAt !== "string"
-        ) {
-          transaction.abort();
-          return;
+      try {
+        for (const version of versions) {
+          assertStoredVersion(version);
         }
+      } catch {
+        transaction.abort();
+        return;
       }
 
       versions.sort((left, right) =>
@@ -156,15 +142,20 @@ function queueVersionSave(transaction, projectId, snapshot, createdAt) {
 
 function queueProjectVersionDeletion(transaction, projectId) {
   const versionStore = transaction.objectStore(VERSIONS_STORE);
-  const cursorRequest = versionStore.index("projectId").openCursor(projectId);
-  cursorRequest.addEventListener("success", () => {
-    const cursor = cursorRequest.result;
-    if (!cursor) {
-      return;
-    }
-    cursor.delete();
-    cursor.continue();
-  });
+  const keysRequest = versionStore.index("projectId").getAllKeys(projectId);
+  keysRequest.addEventListener(
+    "success",
+    () => {
+      if (!Array.isArray(keysRequest.result)) {
+        transaction.abort();
+        return;
+      }
+      for (const versionId of keysRequest.result) {
+        versionStore.delete(versionId);
+      }
+    },
+    { once: true },
+  );
 }
 
 export async function saveProject(project) {
@@ -172,18 +163,9 @@ export async function saveProject(project) {
   const database = await openDatabase();
 
   try {
-    const transaction = database.transaction(
-      [PROJECTS_STORE, VERSIONS_STORE],
-      "readwrite",
-    );
+    const transaction = database.transaction(PROJECTS_STORE, "readwrite");
     const done = transactionDone(transaction);
     transaction.objectStore(PROJECTS_STORE).put(prepared.project);
-    queueVersionSave(
-      transaction,
-      prepared.project.id,
-      prepared.project,
-      prepared.timestamp,
-    );
     await done;
     return deepClone(prepared.project);
   } catch (error) {
@@ -206,7 +188,7 @@ export async function getProject(id) {
       return null;
     }
 
-    assertCharacterProject(project);
+    assertProjectDocument(project);
     return deepClone(project);
   } catch (error) {
     throw asSimpleError(error, "读取项目失败");
@@ -223,8 +205,11 @@ export async function listProjects() {
     const done = transactionDone(transaction);
     const request = transaction.objectStore(PROJECTS_STORE).getAll();
     const [projects] = await Promise.all([requestToPromise(request), done]);
+    if (!Array.isArray(projects)) {
+      throw new Error("项目列表数据无效");
+    }
     for (const project of projects) {
-      assertCharacterProject(project);
+      assertProjectDocument(project);
     }
     projects.sort((left, right) =>
       compareByTimestampDescending(left, right, "updatedAt"),
@@ -268,6 +253,7 @@ export async function saveVersion(projectId, snapshot) {
     const done = transactionDone(transaction);
     const record = queueVersionSave(transaction, id, preparedSnapshot, createdAt);
     await done;
+    assertStoredVersion(record);
     return deepClone(record);
   } catch (error) {
     throw asSimpleError(error, "保存版本失败");
@@ -285,6 +271,9 @@ export async function listVersions(projectId) {
     const done = transactionDone(transaction);
     const request = transaction.objectStore(VERSIONS_STORE).index("projectId").getAll(id);
     const [versions] = await Promise.all([requestToPromise(request), done]);
+    if (!Array.isArray(versions)) {
+      throw new Error("版本列表数据无效");
+    }
     for (const version of versions) {
       assertStoredVersion(version);
     }
@@ -330,7 +319,7 @@ export async function restoreVersion(projectId, versionId) {
             id,
             updatedAt: timestamp,
           };
-          assertCharacterProject(restoredProject);
+          assertProjectDocument(restoredProject);
           restoredProject = deepClone(restoredProject);
 
           transaction.objectStore(PROJECTS_STORE).put(restoredProject);

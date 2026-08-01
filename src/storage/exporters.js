@@ -1,5 +1,10 @@
-import { assertCharacterProject, createId } from "../contracts.js";
+import { assertProjectDocument, createId } from "../contracts.js";
 import { deepClone } from "./clone.js";
+import {
+  CURRENT_APP_VERSION,
+  CURRENT_SCHEMA_VERSION,
+  migrateProjectJson,
+} from "./migrations.js";
 import { getProject, saveProject } from "./repository.js";
 
 const NOT_GENERATED = "未生成";
@@ -29,18 +34,33 @@ async function requireProject(projectId) {
   if (!project) {
     throw new Error("项目不存在");
   }
-  assertCharacterProject(project);
+  assertProjectDocument(project);
   return project;
 }
 
 export async function exportProjectJson(projectId) {
   const project = await requireProject(projectId);
-  return JSON.stringify(project, null, 2);
+  const envelope = {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    appVersion: CURRENT_APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    project: deepClone(project),
+  };
+  return JSON.stringify(migrateProjectJson(envelope), null, 2);
 }
 
 export async function exportProjectMarkdown(projectId) {
   const project = await requireProject(projectId);
-  const lines = [`# ${displayValue(project.title)}`, "", "## 创作简报", ""];
+  const lines = [
+    `# ${displayValue(project.title)}`,
+    "",
+    "## 创意种子",
+    "",
+    displayValue(project.seed?.text),
+    "",
+    "## 创作简报",
+    "",
+  ];
 
   addFields(lines, [
     ["平台", project.brief?.platform],
@@ -175,6 +195,40 @@ export async function exportProjectMarkdown(projectId) {
     ["风格建议", project.character?.imageDesign?.styleSuggestion],
   ]);
 
+  lines.push("", "## 世界设定集", "");
+  if (!project.worldBible) {
+    lines.push(NOT_GENERATED);
+  } else {
+    addFields(lines, [
+      ["摘要", project.worldBible.summary],
+      ["规则", displayList(project.worldBible.rules)],
+      ["地点", displayList(project.worldBible.locations)],
+      ["势力", displayList(project.worldBible.factions)],
+      ["已确认事实", displayList(project.worldBible.canonFacts)],
+      ["禁止事实", displayList(project.worldBible.forbiddenFacts)],
+    ]);
+  }
+
+  lines.push("", "## 故事草稿", "");
+  if (!project.storyDraft) {
+    lines.push(NOT_GENERATED);
+  } else {
+    addFields(lines, [
+      ["标题", project.storyDraft.title],
+      ["一句话故事", project.storyDraft.oneLiner],
+      ["用户身份", project.storyDraft.userIdentity],
+      ["主要角色", displayList(project.storyDraft.mainCharacters)],
+      ["前提", project.storyDraft.premise],
+      ["核心冲突", project.storyDraft.coreConflict],
+      ["初始场景", project.storyDraft.initialScene],
+      ["开场白", project.storyDraft.openingLine],
+      ["关键节点", displayList(project.storyDraft.keyNodes)],
+      ["分支", displayList(project.storyDraft.branches)],
+      ["伏笔", displayList(project.storyDraft.foreshadowing)],
+      ["状态变量", displayList(project.storyDraft.stateVariables)],
+    ]);
+  }
+
   lines.push("", "## 最近规则检查摘要", "");
   if (!project.ruleReport) {
     lines.push(NOT_GENERATED);
@@ -233,14 +287,14 @@ export async function importProjectJson(fileContent) {
     throw new Error("项目 JSON 解析失败");
   }
 
-  assertCharacterProject(parsed);
+  const envelope = migrateProjectJson(parsed);
   const timestamp = new Date().toISOString();
   const imported = {
-    ...deepClone(parsed),
+    ...deepClone(envelope.project),
     id: createId("project"),
     createdAt: timestamp,
     updatedAt: timestamp,
   };
-  assertCharacterProject(imported);
+  assertProjectDocument(imported);
   return saveProject(imported);
 }
