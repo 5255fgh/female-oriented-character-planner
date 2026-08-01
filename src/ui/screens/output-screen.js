@@ -1,5 +1,9 @@
 import { escapeHtml } from "../dom.js";
-import { disabled, OUTPUT_MODE_LABELS, renderFeedback } from "../rendering.js";
+import { disabled, OUTPUT_MODE_LABELS } from "../rendering.js";
+import {
+  canCopyPlatformBlock,
+  canCopyPlatformPack,
+} from "../platform-copy.js";
 
 function renderPackBlock(state, pack, block) {
   const key = `${pack.flowId}:${block.id}`;
@@ -7,6 +11,7 @@ function renderPackBlock(state, pack, block) {
     ? 0
     : Math.max(0, block.currentLength - block.maxLength);
   const emptyRequired = !block.valid && block.text.trim().length === 0;
+  const copyAllowed = canCopyPlatformBlock(state, block);
   const invalidReason = overBy > 0
     ? `已知超限 ${overBy} 字；保留全文，不会自动截断。`
     : emptyRequired
@@ -26,7 +31,7 @@ function renderPackBlock(state, pack, block) {
         <span class="status-pill ${block.verified ? "status-neutral" : "status-warning"}">${block.verified ? "规则已核验" : "限制未确认"}</span>
       </div>
       <p class="over-limit${invalidReason ? " is-visible" : ""}" data-pack-over="${escapeHtml(key)}">${escapeHtml(invalidReason)}</p>
-      <button type="button" class="button-secondary button-small" data-action="copy-pack-block" data-pack-flow="${escapeHtml(pack.flowId)}" data-pack-block="${escapeHtml(block.id)}" data-copy-valid="${String(block.valid)}"${disabled(state, !block.valid)}>复制此字段</button>
+      <button type="button" class="button-secondary button-small" data-action="copy-pack-block" data-pack-flow="${escapeHtml(pack.flowId)}" data-pack-block="${escapeHtml(block.id)}" data-copy-valid="${String(copyAllowed)}"${disabled(state, !copyAllowed)}>复制此字段</button>
     </article>`;
 }
 
@@ -38,7 +43,10 @@ export function renderPlatformOutput(state) {
     ? state.project.platformPacks
     : [];
   const pack = packs.find((item) => item.flowId === expectedFlow) || packs[0] || null;
-  const allValid = Boolean(pack && pack.blocks.every((block) => block.valid));
+  const allValid = canCopyPlatformPack(state, pack);
+  const hasBlockingRuleError =
+    state.projectKind === "character" &&
+    state.project.ruleReport?.status === "fail";
 
   return `
     <section class="card pack-section" id="platform-output" aria-labelledby="output-title">
@@ -47,13 +55,9 @@ export function renderPlatformOutput(state) {
         ${pack ? `<button type="button" class="button-primary button-small" data-action="copy-pack" data-pack-flow="${escapeHtml(pack.flowId)}" data-copy-valid="${String(allValid)}"${disabled(state, !allValid)}>复制整包</button>` : ""}
       </div>
       <p class="helper-text">Unicode 字数实时计算；未确认上限不会被猜测，已知超限不会截断。</p>
+      ${hasBlockingRuleError ? '<p class="message-inline error-text">固定规则仍有错误；修复并重新检查后才能复制。提醒不会阻止复制。</p>' : ""}
       ${pack
         ? `<div class="pack-blocks">${pack.blocks.map((block) => renderPackBlock(state, pack, block)).join("")}</div>`
         : '<div class="empty-state"><p>角色或故事已修改，平台文本需要重新生成。</p><button type="button" class="button-secondary" data-action="run-postprocess">生成平台文本</button></div>'}
     </section>`;
-}
-
-// 兼容旧入口。
-export function renderOutputScreen(state) {
-  return `<section class="step-panel">${renderFeedback(state)}${renderPlatformOutput(state)}</section>`;
 }

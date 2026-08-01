@@ -10,6 +10,9 @@ let expandCharacter;
 let generateConcepts;
 let selectContextForField;
 let createMockLLMClient;
+let createCoreFlowMockLLMClient;
+let createInitialAppState;
+let generatePrimaryContent;
 
 const DETAILED_SEED = {
   text: "架空王城里，一位禁书库档案官与你签下限期婚约成为盟友，却必须在公开旧案真相和保护你重视的人之间选择。",
@@ -39,6 +42,15 @@ before(async () => {
   ));
   ({ createMockLLMClient } = await vite.ssrLoadModule(
     "/src/mock/mock-llm-client.js",
+  ));
+  ({ createCoreFlowMockLLMClient } = await vite.ssrLoadModule(
+    "/src/mock/index.js",
+  ));
+  ({ createInitialAppState } = await vite.ssrLoadModule(
+    "/src/app-state.js",
+  ));
+  ({ generatePrimaryContent } = await vite.ssrLoadModule(
+    "/src/ui/actions/generation-actions.js",
   ));
 });
 
@@ -78,7 +90,9 @@ test("信息不足时最多三问，每题都有 3—5 个选项和推荐值", a
   );
 
   assert.equal(result.questions.length, 3);
-  for (const question of result.questions) {
+  for (let index = 0; index < result.questions.length; index += 1) {
+    const question = result.questions[index];
+    assert.equal(question.id, `question-${index + 1}`);
     assert.ok(question.options.length >= 3 && question.options.length <= 5);
     assert.ok(question.options.includes(question.recommended));
     assert.doesNotMatch(question.prompt, /生日|星座|发色/u);
@@ -141,6 +155,7 @@ test("旧三方向 API 保持正好三个候选，角色扩展元数据也由本
 
   assert.equal(concepts.length, 3);
   contracts.assertConceptCandidates(concepts);
+  assert.equal(concepts.some((concept) => concept.id === "concept-archivist"), false);
 
   const expanded = await expandCharacter(concepts[0], direct.brief, mock);
   assert.notEqual(expanded.meta.id, "character-shen-yanzhou");
@@ -202,4 +217,30 @@ test("字段上下文只携带相关世界、角色和关系字段且不修改�
   assert.doesNotMatch(serialized, /UNRELATED_PROJECT_ID|UNRELATED_STORY|UNRELATED_REPORT|UNRELATED_PLATFORM_PACK|UNRELATED_HISTORY/u);
   assert.deepEqual(project, snapshot);
   assert.notStrictEqual(context.character, project.character);
+});
+
+test("开放故事生成会把用户的追问答案传给世界与故事请求", async () => {
+  const state = createInitialAppState();
+  state.projectKind = "story";
+  state.project.seed = { text: "暴雨封城的最后一夜，两名旧盟友争夺一份证据。" };
+  state.answers = {
+    core_tension: "公开证据会同时伤害双方家族",
+  };
+  const counting = createCountingClient(createCoreFlowMockLLMClient());
+
+  await generatePrimaryContent(state, counting.client);
+
+  const worldRequest = counting.requests.find(
+    (request) => request.task === "world-generation",
+  );
+  const storyRequest = counting.requests.find(
+    (request) => request.task === "story-generation",
+  );
+  for (const request of [worldRequest, storyRequest]) {
+    const serializedMessages = JSON.stringify(request.messages);
+    assert.match(serializedMessages, /关键追问答案 JSON/u);
+    assert.match(serializedMessages, /公开证据会同时伤害双方家族/u);
+  }
+  contracts.assertWorldBible(state.project.worldBible);
+  contracts.assertStoryDraft(state.project.storyDraft);
 });

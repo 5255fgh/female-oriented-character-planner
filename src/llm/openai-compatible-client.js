@@ -902,13 +902,15 @@ function extractJsonValue(rawContent) {
  *     task: string,
  *     messages: unknown[],
  *     temperature?: number,
- *     maxTokens?: number
+ *     maxTokens?: number,
+ *     signal?: AbortSignal
  *   }): Promise<object>,
  *   completeText(request: {
  *     task: string,
  *     messages: unknown[],
  *     temperature?: number,
- *     maxTokens?: number
+ *     maxTokens?: number,
+ *     signal?: AbortSignal
  *   }): Promise<string>
  * }}
  */
@@ -921,14 +923,21 @@ export function createLLMClient({
    *   messages: unknown[],
    *   temperature: number,
    *   maxTokens: number,
-   *   jsonResponse: boolean
+   *   jsonResponse: boolean,
+   *   signal?: AbortSignal
    * }} request
    * @returns {Promise<{
    *   content: string,
    *   diagnostics: ReturnType<typeof buildResponseDiagnostics>
    * }>}
    */
-  async function requestCompletion({ messages, temperature, maxTokens, jsonResponse }) {
+  async function requestCompletion({
+    messages,
+    temperature,
+    maxTokens,
+    jsonResponse,
+    signal,
+  }) {
     const requestBody = {
       model,
       messages,
@@ -947,6 +956,7 @@ export function createLLMClient({
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
+      ...(signal === undefined ? {} : { signal }),
     });
     const {
       payload,
@@ -995,7 +1005,12 @@ export function createLLMClient({
   }
 
   return {
-    async completeJson({ messages, temperature = 0.7, maxTokens = 4096 }) {
+    async completeJson({
+      messages,
+      temperature = 0.7,
+      maxTokens = 4096,
+      signal,
+    }) {
       let requestMessages = messages;
       let lastError;
 
@@ -1005,6 +1020,7 @@ export function createLLMClient({
           temperature,
           maxTokens,
           jsonResponse: attempt === 0,
+          signal,
         });
 
         try {
@@ -1036,12 +1052,18 @@ export function createLLMClient({
       throw new Error(`LLM JSON parsing failed after 2 attempts: ${detail}`);
     },
 
-    async completeText({ messages, temperature = 0.7, maxTokens = 4096 }) {
+    async completeText({
+      messages,
+      temperature = 0.7,
+      maxTokens = 4096,
+      signal,
+    }) {
       const completion = await requestCompletion({
         messages,
         temperature,
         maxTokens,
         jsonResponse: false,
+        signal,
       });
       if (!completion.content.trim()) {
         throw createResponseContentError(

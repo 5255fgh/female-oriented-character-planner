@@ -43,6 +43,10 @@ import {
   updateCharacterField,
 } from "./ui/actions/generation-actions.js";
 import {
+  canCopyPlatformBlock,
+  canCopyPlatformPack,
+} from "./ui/platform-copy.js";
+import {
   confirmCharacterRevision,
   discardCharacterRevision,
   proposeCharacterRevision,
@@ -155,6 +159,7 @@ function completeStage(stageId) {
 
 async function persistCheckpoint(createVersion) {
   try {
+    await autosave.flush();
     appState.autosaveStatus = "saving";
     syncAutosaveUi();
     await saveProjectCheckpoint(appState, { createVersion });
@@ -318,11 +323,12 @@ function updatePackIndicators(pack, block) {
   }
   blockElement?.classList.toggle("pack-invalid", !block.valid);
   if (blockCopy) {
-    blockCopy.disabled = !block.valid;
-    blockCopy.dataset.copyValid = String(block.valid);
+    const copyAllowed = canCopyPlatformBlock(appState, block);
+    blockCopy.disabled = !copyAllowed;
+    blockCopy.dataset.copyValid = String(copyAllowed);
   }
   if (wholeCopy) {
-    const allValid = pack.blocks.every((item) => item.valid);
+    const allValid = canCopyPlatformPack(appState, pack);
     wholeCopy.disabled = !allValid;
     wholeCopy.dataset.copyValid = String(allValid);
   }
@@ -421,6 +427,10 @@ app.addEventListener("click", (event) => {
     taskRunner.cancel("generation");
     return;
   }
+  if (action === "cancel-current-request") {
+    taskRunner.cancel(appState.pendingAction);
+    return;
+  }
   if (appState.loading) return;
 
   if (action === "go-home") {
@@ -503,8 +513,8 @@ app.addEventListener("click", (event) => {
     return;
   }
   if (action === "run-full-simulation") {
-    void runTask("full-simulation", async () => {
-      await runSimulationForProject(appState, getLLMClient());
+    void runTask("full-simulation", async ({ signal }) => {
+      await runSimulationForProject(appState, getLLMClient(), signal);
       scheduleAutosave();
     });
     return;
@@ -515,7 +525,7 @@ app.addEventListener("click", (event) => {
       button.dataset.packFlow,
       button.dataset.packBlock,
     );
-    if (!block || !block.valid) {
+    if (!canCopyPlatformBlock(appState, block)) {
       showError(new Error("该字段无效，修正后才能复制。"));
       return;
     }
@@ -527,7 +537,7 @@ app.addEventListener("click", (event) => {
   }
   if (action === "copy-pack") {
     const pack = getActivePack(appState);
-    if (!pack || pack.blocks.some((block) => !block.valid)) {
+    if (!canCopyPlatformPack(appState, pack)) {
       showError(new Error("输入包含有无效字段，修正后才能复制整包。"));
       return;
     }

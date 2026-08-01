@@ -67,16 +67,6 @@ function inferProjectKind(project) {
   return "character";
 }
 
-function inferProjectView(project) {
-  if (project?.character || project?.storyDraft || project?.platformPacks?.length) {
-    return "result";
-  }
-  if (project?.concepts?.length === 3) {
-    return "concepts";
-  }
-  return "create";
-}
-
 /**
  * 创建仅由普通对象组成的 UI 状态；瞬时状态不会写入 ProjectDocument。
  */
@@ -104,7 +94,6 @@ export function createInitialAppState() {
     revisionDiff: null,
     revisionHistory: [],
     fieldInstructions: {},
-    selectedRuleIssueIds: [],
     activeFieldPath: "",
     savedProjects: [],
     versions: [],
@@ -121,63 +110,6 @@ export function createInitialAppState() {
 }
 
 export const appState = createInitialAppState();
-
-export function resetCurrentProject(kind = "character") {
-  const projectKind = kind === "story" ? "story" : "character";
-  appState.projectKind = projectKind;
-  appState.project = createWorkingProject(
-    projectKind === "story" ? "未命名开放故事" : "未命名角色",
-  );
-  appState.currentStep = "create";
-  appState.generationMode = "direct";
-  appState.quickInput = { idea: "", mustInclude: "", avoid: "" };
-  appState.advancedBrief = createEmptyBrief();
-  appState.questions = [];
-  appState.answers = {};
-  appState.progress = createGenerationProgress();
-  appState.progressStatus = "idle";
-  appState.selectedConceptId = null;
-  appState.quickDialogueReport = null;
-  appState.storyCheck = null;
-  appState.pendingRevision = null;
-  appState.revisionDiff = null;
-  appState.revisionHistory = [];
-  appState.fieldInstructions = {};
-  appState.selectedRuleIssueIds = [];
-  appState.activeFieldPath = "";
-  appState.versions = [];
-  appState.error = "";
-  appState.notice = "";
-  appState.autosaveStatus = "idle";
-  appState.autosaveError = "";
-  appState.dirty = false;
-}
-
-export function replaceCurrentProject(project) {
-  appState.project = structuredClone(project);
-  appState.projectKind = inferProjectKind(project);
-  appState.currentStep = inferProjectView(project);
-  appState.selectedConceptId = project.selectedConceptId ?? null;
-  appState.quickDialogueReport = null;
-  appState.storyCheck = project.storyDraft
-    ? { status: "pass", message: "故事结构已通过共享契约校验。" }
-    : null;
-  appState.pendingRevision = null;
-  appState.revisionDiff = null;
-  appState.revisionHistory = [];
-  appState.error = "";
-  appState.notice = "";
-  appState.activeFieldPath = "";
-  appState.fieldInstructions = {};
-  appState.autosaveStatus = "saved";
-  appState.autosaveError = "";
-  appState.dirty = false;
-}
-
-export function markProjectChanged() {
-  appState.dirty = true;
-  appState.notice = "";
-}
 
 export function inferKindFromProject(project) {
   return inferProjectKind(project);

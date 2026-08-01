@@ -96,8 +96,3 @@ export function renderSavePanel(state) {
       ${renderVersions(state)}
     </section>`;
 }
-
-// 兼容旧入口；新流程把保存区直接放在结果页底部。
-export function renderStorageScreen(state) {
-  return `<section class="step-panel">${renderFeedback(state)}${renderSavePanel(state)}${renderSavedProjects(state, true)}</section>`;
-}

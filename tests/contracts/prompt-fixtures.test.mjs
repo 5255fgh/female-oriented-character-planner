@@ -13,17 +13,8 @@ const MULTI_AGENT_REVIEW_PATTERN = /multi[-\s]?agent|多\s*Agent|多个\s*(?:代
 const INFINITE_RETRY_PATTERN = /(?:无限|持续|反复|循环)(?:地|进行)?(?:重试|再试)|直到(?:成功|通过).{0,12}(?:重试|再试)|不断(?:重试|再试)/u;
 const GENERATED_APP_METADATA_PATTERN = /"meta"\s*:\s*\{[\s\S]{0,260}"id"\s*:|"(?:createdAt|updatedAt|generatedAt)"\s*:/u;
 
-const KNOWN_RUNTIME_VERSION_GAPS = [
-  "character-expansion",
-  "concept-generation",
-  "dialogue-evaluation",
-  "field-regeneration",
-  "maoxiang-pack",
-  "quick-dialogue-test",
-  "story-generation",
-  "world-generation",
-];
-const KNOWN_MODEL_METADATA_GAPS = ["character-expansion"];
+const KNOWN_RUNTIME_VERSION_GAPS = [];
+const KNOWN_MODEL_METADATA_GAPS = [];
 
 const promptTexts = new Map(
   PROMPT_FIXTURES.map((fixture) => [
@@ -99,12 +90,8 @@ test("运行时提示词版本缺口与 QA 交接清单一致", () => {
   assert.deepEqual(findRuntimeVersionGaps(), KNOWN_RUNTIME_VERSION_GAPS);
 });
 
-test("所有运行时请求都携带提示词版本", (context) => {
+test("所有运行时请求都携带提示词版本", () => {
   const gaps = findRuntimeVersionGaps();
-  if (gaps.length > 0) {
-    context.todo(`等待生产模块补齐版本：${gaps.join(", ")}`);
-    return;
-  }
   assert.deepEqual(gaps, []);
 });
 
@@ -112,11 +99,17 @@ test("模型元数据缺口与 QA 交接清单一致", () => {
   assert.deepEqual(findModelMetadataGaps(), KNOWN_MODEL_METADATA_GAPS);
 });
 
-test("提示词不要求模型生成应用元数据", (context) => {
+test("提示词不要求模型生成应用元数据", () => {
   const gaps = findModelMetadataGaps();
-  if (gaps.length > 0) {
-    context.todo(`等待生产提示词移除元数据：${gaps.join(", ")}`);
-    return;
-  }
   assert.deepEqual(gaps, []);
+});
+
+test("问题与概念提示词把应用 ID 留给本地代码", () => {
+  const seedPrompt = promptTexts.get("seed-analysis");
+  const conceptPrompt = promptTexts.get("concept-generation");
+
+  assert.doesNotMatch(seedPrompt, /^\s*-\s*`id`\s*:/mu);
+  assert.match(seedPrompt, /模型不得输出 `id`/u);
+  assert.doesNotMatch(conceptPrompt, /"id"\s*:/u);
+  assert.match(conceptPrompt, /模型不得输出 `id`/u);
 });

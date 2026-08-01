@@ -16,6 +16,7 @@ import {
   generateStoryDraft,
   generateWorldBible,
 } from "../../generation/index.js";
+import { withAbortSignal } from "../../llm/abortable-client.js";
 import { createLLMClient } from "../../llm/openai-compatible-client.js";
 import { createCoreFlowMockLLMClient } from "../../mock/index.js";
 import {
@@ -34,6 +35,26 @@ import {
 function markChanged(state) {
   state.dirty = true;
   state.notice = "";
+}
+
+function createAnsweredStorySeed(state) {
+  const answers = Object.fromEntries(
+    Object.entries(state.answers || {}).filter(
+      ([, value]) => typeof value === "string" && value.trim().length > 0,
+    ),
+  );
+  if (Object.keys(answers).length === 0) {
+    return state.project.seed;
+  }
+
+  const seed = {
+    text: [
+      state.project.seed.text,
+      `关键追问答案 JSON：\n${JSON.stringify(answers)}`,
+    ].join("\n\n"),
+  };
+  assertCreativeSeed(seed);
+  return seed;
 }
 
 export function throwIfAborted(signal) {
@@ -191,14 +212,15 @@ async function deriveBriefForExploration(state, llmClient, signal) {
 
 export async function generatePrimaryContent(state, llmClient, signal) {
   if (state.projectKind === "story") {
+    const storySeed = createAnsweredStorySeed(state);
     const worldBible = await generateWorldBible(
-      { seed: state.project.seed },
+      { seed: storySeed },
       llmClient,
       { signal },
     );
     throwIfAborted(signal);
     const storyDraft = await generateStoryDraft(
-      { seed: state.project.seed, worldBible },
+      { seed: storySeed, worldBible },
       llmClient,
       { signal },
     );
@@ -217,7 +239,10 @@ export async function generatePrimaryContent(state, llmClient, signal) {
 
   if (state.generationMode === "explore") {
     const derived = await deriveBriefForExploration(state, llmClient, signal);
-    const concepts = await generateConcepts(derived.brief, llmClient);
+    const concepts = await generateConcepts(
+      derived.brief,
+      withAbortSignal(llmClient, signal),
+    );
     throwIfAborted(signal);
     state.project = {
       ...state.project,
@@ -256,7 +281,11 @@ export async function generatePrimaryContent(state, llmClient, signal) {
 }
 
 export async function selectConceptForProject(state, concept, llmClient, signal) {
-  const character = await expandCharacter(concept, state.project.brief, llmClient);
+  const character = await expandCharacter(
+    concept,
+    state.project.brief,
+    withAbortSignal(llmClient, signal),
+  );
   throwIfAborted(signal);
   state.project = {
     ...state.project,

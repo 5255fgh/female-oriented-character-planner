@@ -1,7 +1,5 @@
 import { escapeHtml, formatDateTime } from "./dom.js";
 
-export const STEPS = ["首页", "快速输入", "追问", "生成", "结果"];
-
 export const OUTPUT_MODE_LABELS = {
   editor_character: "角色编辑器",
   free_character: "猫箱自由创建",
@@ -44,11 +42,6 @@ export function disabled(state, condition = false) {
   return state.loading || condition ? " disabled" : "";
 }
 
-// 保留旧 smoke 使用的导航判断；新 UI 由 currentStep 字符串直接路由。
-export function canVisitStep() {
-  return true;
-}
-
 export function autosaveStatusClass(status) {
   if (status === "saved") return "status-pass";
   if (status === "error") return "status-fail";
@@ -58,10 +51,14 @@ export function autosaveStatusClass(status) {
 
 export function renderFeedback(state) {
   const showGenericLoading = state.loading && state.currentStep !== "progress";
+  const canCancelRequest = showGenericLoading && (
+    state.pendingAction === "full-simulation" ||
+    String(state.pendingAction || "").startsWith("revision-")
+  );
   return `
     ${state.error ? `<div class="message message-error" role="alert"><strong>操作未完成</strong><p>${escapeHtml(state.error)}</p></div>` : ""}
     ${state.notice ? `<div class="message message-success" role="status">${escapeHtml(state.notice)}</div>` : ""}
-    ${showGenericLoading ? `<div class="loading-bar" role="status" aria-live="polite">正在处理当前操作…</div>` : ""}`;
+    ${showGenericLoading ? `<div class="loading-bar" role="status" aria-live="polite"><span>正在处理当前操作…</span>${canCancelRequest ? '<button type="button" class="button-danger button-small" data-action="cancel-current-request">取消当前请求</button>' : ""}</div>` : ""}`;
 }
 
 export function renderAutosavePill(state) {
@@ -69,10 +66,10 @@ export function renderAutosavePill(state) {
   return `<span class="status-pill ${autosaveStatusClass(status)}" data-save-status data-status="${escapeHtml(status)}">${escapeHtml(AUTOSAVE_LABELS[status] || status)}</span>`;
 }
 
-export function renderSavedProjects(state, compact = false) {
+export function renderSavedProjects(state) {
   const projects = Array.isArray(state.savedProjects) ? state.savedProjects : [];
   return `
-    <section class="card saved-projects${compact ? " compact" : ""}" id="project-library">
+    <section class="card saved-projects" id="project-library">
       <div class="section-heading">
         <div>
           <p class="section-kicker">本地草稿</p>

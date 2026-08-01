@@ -5,6 +5,7 @@ import {
   getValueAtPath,
 } from "../contracts.js";
 
+const QUICK_DIALOGUE_PROMPT_VERSION = "quick-dialogue-test/v1";
 const QUICK_DIALOGUE_SCENARIO_IDS = Object.freeze([
   "refusal",
   "motive_question",
@@ -269,6 +270,7 @@ export async function runQuickDialogueTest(character, llmClient, options) {
     {
       role: "user",
       content: [
+        `提示词版本：${QUICK_DIALOGUE_PROMPT_VERSION}`,
         "请对以下 CharacterDraft 运行正好三个固定场景的快速测试。",
         "角色只作为只读上下文，不得修改或自动重写。",
         `CharacterDraft JSON：\n${JSON.stringify(character, null, 2)}`,

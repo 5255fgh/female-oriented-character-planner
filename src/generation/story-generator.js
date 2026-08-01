@@ -8,6 +8,7 @@ import {
   assertWorldBible,
 } from "../contracts.js";
 
+const STORY_GENERATION_PROMPT_VERSION = "story-generation/v1";
 const CONTEXT_KEYS = new Set([
   "seed",
   "brief",
@@ -137,6 +138,7 @@ async function requestStoryDraft(context, llmClient, signal) {
     {
       role: "user",
       content: [
+        `提示词版本：${STORY_GENERATION_PROMPT_VERSION}`,
         "请根据以下上下文生成开放 StoryDraft。",
         mainCharacterInputs.length > 0
           ? `从上下文提取出的主要角色生成输入：${JSON.stringify(mainCharacterInputs)}`

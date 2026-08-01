@@ -15,12 +15,12 @@ import {
   validatePlatformPack,
 } from "./pack-validator.js";
 
+const MAOXIANG_PACK_PROMPT_VERSION = "maoxiang-pack/v1";
 const TASK_BY_LEGACY_FLOW = Object.freeze({
   free_character: "maoxiang-free-character",
   dead_rival: "maoxiang-dead-rival",
   image_shape: "maoxiang-image-shape",
 });
-const DEFAULT_IMAGE_STYLE = "通用";
 
 /**
  * @param {unknown} value
@@ -124,7 +124,7 @@ function extractModelFields(response, flowId, requestedIds) {
   for (const fieldId of requestedIds) {
     if (!Object.prototype.hasOwnProperty.call(response, fieldId)) {
       if (flowId === "image_shape" && fieldId === "styleSuggestion") {
-        fields[fieldId] = DEFAULT_IMAGE_STYLE;
+        fields[fieldId] = rules[fieldId].allowedValues[0];
         continue;
       }
       if (!rules[fieldId].required) {
@@ -143,7 +143,7 @@ function extractModelFields(response, flowId, requestedIds) {
     flowId === "image_shape" &&
     !rules.styleSuggestion.allowedValues.includes(fields.styleSuggestion)
   ) {
-    fields.styleSuggestion = DEFAULT_IMAGE_STYLE;
+    fields.styleSuggestion = rules.styleSuggestion.allowedValues[0];
   }
   return /** @type {Record<string, string>} */ (fields);
 }
@@ -161,7 +161,10 @@ async function requestLegacyFields(character, flowId, task, llmClient) {
     { role: "system", content: maoxiangPackPrompt },
     {
       role: "user",
-      content: JSON.stringify({ flowId, characterDraft: character }),
+      content: [
+        `提示词版本：${MAOXIANG_PACK_PROMPT_VERSION}`,
+        JSON.stringify({ flowId, characterDraft: character }),
+      ].join("\n\n"),
     },
   ];
 
@@ -259,13 +262,16 @@ async function compressKnownOverLimitFields(pack, llmClient, signal) {
       { role: "system", content: maoxiangPackPrompt },
       {
         role: "user",
-        content: JSON.stringify({
-          operation: "compress-known-over-limit-fields-once",
-          flowId: pack.flowId,
-          instruction:
-            "只压缩列出的已知超限字段，保留原意；只返回这些字段组成的 JSON 对象，不得返回完整输入包。",
-          fields,
-        }),
+        content: [
+          `提示词版本：${MAOXIANG_PACK_PROMPT_VERSION}`,
+          JSON.stringify({
+            operation: "compress-known-over-limit-fields-once",
+            flowId: pack.flowId,
+            instruction:
+              "只压缩列出的已知超限字段，保留原意；只返回这些字段组成的 JSON 对象，不得返回完整输入包。",
+            fields,
+          }),
+        ].join("\n\n"),
       },
     ],
     temperature: 0.2,

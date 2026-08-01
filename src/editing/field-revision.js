@@ -10,6 +10,7 @@ import {
 } from "../contracts/common.js";
 import { assertRevisionForProject } from "./revision-core.js";
 
+const FIELD_REGENERATION_PROMPT_VERSION = "field-regeneration/v1";
 const SYSTEM_MANAGED_PATHS = new Set([
   "meta",
   "meta.id",
@@ -130,6 +131,7 @@ export async function proposeFieldRevision(
     {
       role: "user",
       content: [
+        `提示词版本：${FIELD_REGENERATION_PROMPT_VERSION}`,
         "输出模式：revision-proposal",
         `唯一目标字段：${fieldPath}`,
         `当前字段值 JSON：\n${JSON.stringify(currentValue, null, 2)}`,

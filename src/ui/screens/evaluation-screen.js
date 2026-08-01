@@ -2,7 +2,6 @@ import { escapeHtml } from "../dom.js";
 import {
   disabled,
   isPending,
-  renderFeedback,
   SCENARIO_LABELS,
   STATUS_LABELS,
 } from "../rendering.js";
@@ -119,9 +118,4 @@ export function renderQuickCheck(state) {
   return state.project.storyDraft && !state.project.character
     ? renderStoryCheck(state)
     : renderCharacterCheck(state);
-}
-
-// 兼容旧入口。
-export function renderEvaluationScreen(state) {
-  return `<section class="step-panel">${renderFeedback(state)}${renderQuickCheck(state)}</section>`;
 }

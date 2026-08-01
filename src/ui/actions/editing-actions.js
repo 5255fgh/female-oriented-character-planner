@@ -11,7 +11,6 @@ import { selectContextForField } from "../../generation/index.js";
 function clearDownstreamUiState(state) {
   state.quickDialogueReport = null;
   state.storyCheck = null;
-  state.selectedRuleIssueIds = [];
 }
 
 export async function proposeCharacterRevision(

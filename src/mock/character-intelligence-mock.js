@@ -5,13 +5,11 @@ import {
 
 const SEED_ANALYSIS_QUESTIONS = [
   {
-    id: "world-setting",
     prompt: "这段关系主要发生在怎样的世界背景中？",
     options: ["现代都市", "东方幻想", "西式奇幻", "近未来"],
     recommended: "现代都市",
   },
   {
-    id: "relationship-mechanism",
     prompt: "你更希望双方以哪种关系机制开始互动？",
     options: [
       "势均力敌的合作伙伴",
@@ -22,7 +20,6 @@ const SEED_ANALYSIS_QUESTIONS = [
     recommended: "势均力敌的合作伙伴",
   },
   {
-    id: "core-tension",
     prompt: "哪种核心张力最适合推动这名角色主动行动？",
     options: [
       "共同调查高风险秘密",
@@ -108,7 +105,7 @@ function hasSufficientSeedDetails(seedText) {
 
 /**
  * @param {unknown} request
- * @returns {{questions: Array<{id: string, prompt: string, options: string[], recommended: string}>}}
+ * @returns {{questions: Array<{prompt: string, options: string[], recommended: string}>}}
  */
 export function createSeedAnalysisMockResponse(request) {
   return {

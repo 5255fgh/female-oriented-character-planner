@@ -50,28 +50,23 @@ function assertSeedAnalysis(value) {
     throw new Error("SeedAnalysis.questions: expected at most 3 questions");
   }
 
-  const ids = new Set();
   const questions = value.questions.map((questionValue, index) => {
     const path = `SeedAnalysis.questions[${index}]`;
     if (!isPlainObject(questionValue)) {
       throw new Error(`${path}: expected an object`);
     }
-    const expectedKeys = new Set(["id", "prompt", "options", "recommended"]);
+    const expectedKeys = new Set(["prompt", "options", "recommended"]);
     for (const key of Object.keys(questionValue)) {
       if (!expectedKeys.has(key)) {
         throw new Error(`${path}.${key}: unexpected field`);
       }
     }
 
-    const id = assertNonEmptyString(questionValue.id, `${path}.id`);
+    const id = `question-${index + 1}`;
     const questionPrompt = assertNonEmptyString(
       questionValue.prompt,
       `${path}.prompt`,
     );
-    if (ids.has(id)) {
-      throw new Error(`${path}.id: expected a unique question id`);
-    }
-    ids.add(id);
     if (LOW_IMPACT_DETAIL_PATTERN.test(questionPrompt)) {
       throw new Error(`${path}.prompt: asks for a low-impact reversible detail`);
     }

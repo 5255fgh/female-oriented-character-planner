@@ -15,7 +15,10 @@ import {
   renderStorySummary,
 } from "../../src/ui/screens/character-screen.js";
 import { renderPlatformOutput } from "../../src/ui/screens/output-screen.js";
-import { renderAutosavePill } from "../../src/ui/rendering.js";
+import {
+  renderAutosavePill,
+  renderFeedback,
+} from "../../src/ui/rendering.js";
 
 const mockClient = createCoreFlowMockLLMClient();
 const character = await mockClient.completeJson({
@@ -181,6 +184,29 @@ test("warning 不阻止有效平台字段复制", () => {
   assert.equal(state.project.ruleReport.status, "warning");
 });
 
+test("规则 error 会阻止复制，但不把平台字段伪装成超限", () => {
+  const state = createCharacterResultState();
+  state.project.ruleReport = {
+    status: "fail",
+    issues: [{
+      code: "missing-goal",
+      severity: "error",
+      fieldPath: "persona.currentGoal",
+      message: "当前目标为空。",
+      evidence: "persona.currentGoal 为空。",
+      suggestedAction: "补充角色自己的当前目标。",
+    }],
+  };
+
+  const html = renderPlatformOutput(state);
+  const copyButton = html.match(/<button[^>]+data-action="copy-pack-block"[^>]*>/)?.[0];
+
+  assert.match(copyButton, /data-copy-valid="false"/);
+  assert.match(copyButton, / disabled/);
+  assert.match(html, /固定规则仍有错误/);
+  assert.match(html, /data-pack-validity="valid"/);
+});
+
 test("已知超限字段明确无效且复制按钮禁用，不截断文本", () => {
   const state = createCharacterResultState();
   const overLimitText = "字".repeat(1001);
@@ -266,6 +292,16 @@ test("自动保存状态分别渲染保存中、已保存和保存失败", () =>
     assert.match(html, new RegExp(label));
     assert.match(html, new RegExp(`data-status="${status}"`));
   }
+});
+
+test("可取消的模型请求在通用加载反馈中提供取消按钮", () => {
+  const state = createInitialAppState();
+  state.currentStep = "result";
+  state.loading = true;
+  state.pendingAction = "full-simulation";
+
+  const html = renderFeedback(state);
+  assert.match(html, /data-action="cancel-current-request"/);
 });
 
 test("取消任务状态只标记当前真实阶段为已取消", () => {

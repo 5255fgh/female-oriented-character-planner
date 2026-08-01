@@ -59,19 +59,19 @@ Prompt fixture 由 `tests/contracts/prompt-fixtures.mjs` 和对应测试覆盖�
 - `npm run build` — passed；Vite 7.3.6，55 modules transformed。
 - GitHub Actions `CI` run `30693816096` — Node 20 与 Node 22 均 passed。
 
-两个 `todo` 与下方已知生产缺陷一一对应；“已知缺口清单”本身是通过的强断言，新增未登记缺口会失败。
+以上结果是 QA 分支合并前的历史记录。最终集成已关闭两个 `todo`；当前完整测试为 76 项通过、0 失败、0 TODO。
 
 ## Integration Notes
 
 - 本分支从 `integration/intelligent-v2` 的 `bc2683147c1edd17efeb9719e9047ba1a13bc5cb` 创建。
 - Draft PR：`#6`，目标分支 `integration/intelligent-v2`。
-- 最终集成合入 UI 后，应复查 README 中“UI 与最终集成仍在接线”的状态表述，并按实际界面改为可用入口说明；当前文档没有预先宣称并行 UI 已完成。
-- 若最终集成修复 Prompt 缺口，应同时更新 `KNOWN_RUNTIME_VERSION_GAPS`、`KNOWN_MODEL_METADATA_GAPS`；对应 `todo` 应转为普通通过测试，不能直接删除断言。
+- 最终集成已复查 README，并按正式 UI 的四个首页入口、结果页能力和取消行为更新为可用说明。
+- `KNOWN_RUNTIME_VERSION_GAPS` 与 `KNOWN_MODEL_METADATA_GAPS` 已清空；原 `todo` 已转为普通通过测试，缺口清单断言仍保留。
 - CI 只使用 Mock 和本地 fixture，不需要 API Key 或真实网络模型。
 
 ## Requested Shared Change
 
-1. 以下八个生产提示词消费者没有把 fixture 声明的版本写入运行时请求：
+1. 已解决：以下八个生产提示词消费者均已把 fixture 声明的版本写入运行时请求：
    - `concept-generation`
    - `character-expansion`
    - `field-regeneration`
@@ -81,13 +81,12 @@ Prompt fixture 由 `tests/contracts/prompt-fixtures.mjs` 和对应测试覆盖�
    - `dialogue-evaluation`
    - `maoxiang-pack`
 
-   当前只有 `seed-analysis/v1` 与 `brief-character-generation/v1` 可从请求中追踪。最终集成应为其余调用补齐稳定版本标识。
+   最终集成已补齐稳定版本标识，所有运行时请求均可追踪到唯一 fixture 版本。
 
-2. `prompts/character-expansion.md` 的完整结构示例仍要求模型返回 `meta.id`、`meta.createdAt`、`meta.updatedAt`，与“应用元数据由本地生成”的规则冲突。生产代码会覆盖这些值，避免了数据污染，但提示词仍浪费输出并违反 Prompt fixture 目标。最终集成应只要求必要正文或 `meta.name`。
+2. 已解决：`prompts/character-expansion.md` 不再要求模型返回 `meta.id`、`meta.createdAt`、`meta.updatedAt`；问题 ID、候选 ID、角色 ID 与时间戳全部由本地代码生成。
 
 上述文件不在 QA Docs 所有权内，因此本任务未跨模块修改。
 
 ## Real Open Issues
 
 - 已确认猫箱规则的原始截图、可审计链接和复核日期仍未入库，`verifiedAt` 只能保持 `null`。
-- README 的最终界面入口、截图和交互措辞必须在并行 UI 分支合入后复核。

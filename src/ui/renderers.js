@@ -15,12 +15,10 @@ import { renderPlatformOutput } from "./screens/output-screen.js";
 import {
   renderProjectScreen,
   renderSavePanel,
-  renderStorageScreen,
 } from "./screens/project-screen.js";
 import {
   renderAutosavePill,
   renderFeedback,
-  SCENARIO_LABELS,
 } from "./rendering.js";
 
 function renderHeader(state, model) {
@@ -41,14 +39,6 @@ function renderHeader(state, model) {
         <span class="model-name">${escapeHtml(model)}</span>
       </div>
     </header>`;
-}
-
-function normalizeView(state) {
-  if (typeof state.currentStep === "string") return state.currentStep;
-  if (state.currentStep === 0) return "home";
-  if (state.currentStep === 1) return "create";
-  if (state.currentStep === 2) return "concepts";
-  return "result";
 }
 
 function renderResultScreen(state) {
@@ -82,13 +72,12 @@ function renderResultScreen(state) {
 }
 
 function renderCurrentView(state) {
-  const view = normalizeView(state);
+  const view = state.currentStep;
   if (view === "create") return renderBriefScreen(state);
   if (view === "questions") return renderQuestionScreen(state);
   if (view === "progress") return renderProgressScreen(state);
   if (view === "concepts") return renderConceptScreen(state);
   if (view === "result") return renderResultScreen(state);
-  if (view === "storage") return renderStorageScreen(state);
   return renderProjectScreen(state);
 }
 
@@ -110,5 +99,3 @@ export function renderApp(state, { model }) {
       <footer>项目保存在当前浏览器；真实模式的密钥只由本地代理处理。</footer>
     </div>`;
 }
-
-export { SCENARIO_LABELS };

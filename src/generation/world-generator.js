@@ -8,6 +8,7 @@ import {
   assertWorldBible,
 } from "../contracts.js";
 
+const WORLD_GENERATION_PROMPT_VERSION = "world-generation/v1";
 const CONTEXT_KEYS = new Set([
   "seed",
   "brief",
@@ -117,6 +118,7 @@ async function requestWorldBible(context, llmClient, signal) {
     {
       role: "user",
       content: [
+        `提示词版本：${WORLD_GENERATION_PROMPT_VERSION}`,
         "请根据以下上下文生成共享 WorldBible。",
         "只保留角色行动、关系发展或故事冲突真正需要的世界信息。",
         `生成上下文 JSON：\n${JSON.stringify(context, null, 2)}`,

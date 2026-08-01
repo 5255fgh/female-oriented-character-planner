@@ -85,8 +85,8 @@
 
 ## Requested Shared Change
 
-- 集成任务可让 `src/llm/openai-compatible-client.js` 接受核心模块已附在请求上的可选 `signal`，并把它传给 `fetch`。当前该共享客户端会忽略 `request.signal`，UI 所有权范围内不能修改。
+- 已由最终集成完成：`src/llm/openai-compatible-client.js` 接受核心模块附在请求上的可选 `signal` 并传给 `fetch`；共享可取消客户端同时覆盖 Mock 或忽略信号的传输。
 
 ## Real Open Issues
 
-- 真实 API 模式取消后，UI 会立即进入已取消状态且不会被迟到响应覆盖，但底层 HTTP 请求仍会继续到上游响应或网络超时；需完成上述共享客户端改动才能物理中止请求。
+- None.

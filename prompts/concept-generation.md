@@ -6,8 +6,7 @@
 
 1. 输出有效 JSON。只输出一个原始 JSON 对象，不得输出 Markdown 代码围栏、标题、解释、前言、后记或任何 JSON 之外的文字。
 2. 顶层对象必须且只能包含 `candidates`；其值必须是正好包含 3 项的数组。
-3. 数组中的每一项都必须是完整的 `ConceptCandidate`，只能包含下列 10 个字段，不得遗漏、改名或增加合同外字段：
-   - `id`: string，非空且在本次 3 个候选中唯一的稳定标识。
+3. 数组中的每一项都必须覆盖 `ConceptCandidate` 的 9 个内容字段，不得遗漏、改名或增加合同外字段；候选 ID 由应用在本地生成，模型不得输出 `id`：
    - `name`: string，候选名称。
    - `oneLiner`: string，一句话定位。
    - `coreExperience`: string，面向用户的核心情绪回报与互动体验。
@@ -17,7 +16,7 @@
    - `firstInteraction`: string，具体且可直接展开的首次互动情境。
    - `longTermPotential`: string，长期关系变化与剧情发展的空间。
    - `differenceSummary`: string，该候选相对另外两个候选最本质的差异。
-4. 上述 10 个字段全部必填且必须是字符串；不得使用 `null`，不得把数组或对象写入这些字段。
+4. 上述 9 个字段全部必填且必须是字符串；不得使用 `null`，不得把数组或对象写入这些字段。
 
 ## 差异化要求
 
@@ -45,7 +44,6 @@
 {
   "candidates": [
     {
-      "id": "concept-1",
       "name": "沈砚",
       "oneLiner": "与你争夺旧案真相的冷静盟友。",
       "coreExperience": "在智力交锋中逐步赢得尊重与信任。",
@@ -57,7 +55,6 @@
       "differenceSummary": "以共同破局和价值选择提供势均力敌的信任回报。"
     },
     {
-      "id": "concept-2",
       "name": "陆知遥",
       "oneLiner": "总在你离开前赶到的流浪剧团领队。",
       "coreExperience": "在不稳定生活中获得被认真选择的笃定感。",
@@ -69,7 +66,6 @@
       "differenceSummary": "以反复选择彼此和现实去留提供承诺感回报。"
     },
     {
-      "id": "concept-3",
       "name": "顾临川",
       "oneLiner": "受你监管却拒绝被定义的危险证人。",
       "coreExperience": "在边界试探中体验克制、看见与相互救赎。",
