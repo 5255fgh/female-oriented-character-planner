@@ -1,25 +1,19 @@
 import { escapeHtml, formatDateTime } from "./dom.js";
 
-export const STEPS = [
-  "项目与运行模式",
-  "创作简报",
-  "三个候选",
-  "完整角色",
-  "质量检查",
-  "猫箱输入包",
-  "保存与导出",
-];
+export const STEPS = ["首页", "快速输入", "追问", "生成", "结果"];
 
 export const OUTPUT_MODE_LABELS = {
+  editor_character: "角色编辑器",
   free_character: "猫箱自由创建",
-  dead_rival: "死对头",
+  dead_rival: "亡者劲敌",
   image_shape: "捏形象",
+  editor_open_story: "开放故事编辑器",
 };
 
 export const STATUS_LABELS = {
   pass: "通过",
-  warning: "有提醒",
-  fail: "未通过",
+  warning: "提醒",
+  fail: "错误",
 };
 
 export const SCENARIO_LABELS = {
@@ -33,6 +27,15 @@ export const SCENARIO_LABELS = {
   long_conversation_progress: "长对话推进",
 };
 
+export const AUTOSAVE_LABELS = {
+  idle: "尚未保存",
+  pending: "等待保存",
+  saving: "保存中",
+  saved: "已保存",
+  error: "保存失败",
+  cancelled: "保存已取消",
+};
+
 export function isPending(state, action) {
   return state.loading && state.pendingAction === action;
 }
@@ -41,36 +44,44 @@ export function disabled(state, condition = false) {
   return state.loading || condition ? " disabled" : "";
 }
 
-export function canVisitStep(state, step) {
-  if (step <= 1) return true;
-  if (step === 2) return state.project.concepts.length === 3;
-  if (step <= 4) return Boolean(state.project.character);
-  if (step === 5) {
-    return Boolean(state.project.ruleReport && state.project.simulationReport);
-  }
-  return state.project.platformPacks.length > 0;
+// 保留旧 smoke 使用的导航判断；新 UI 由 currentStep 字符串直接路由。
+export function canVisitStep() {
+  return true;
+}
+
+export function autosaveStatusClass(status) {
+  if (status === "saved") return "status-pass";
+  if (status === "error") return "status-fail";
+  if (status === "saving" || status === "pending") return "status-warning";
+  return "status-neutral";
 }
 
 export function renderFeedback(state) {
+  const showGenericLoading = state.loading && state.currentStep !== "progress";
   return `
     ${state.error ? `<div class="message message-error" role="alert"><strong>操作未完成</strong><p>${escapeHtml(state.error)}</p></div>` : ""}
     ${state.notice ? `<div class="message message-success" role="status">${escapeHtml(state.notice)}</div>` : ""}
-    ${state.loading ? `<div class="loading-bar" role="status" aria-live="polite">正在处理，请稍候…</div>` : ""}`;
+    ${showGenericLoading ? `<div class="loading-bar" role="status" aria-live="polite">正在处理当前操作…</div>` : ""}`;
+}
+
+export function renderAutosavePill(state) {
+  const status = state.autosaveStatus || (state.dirty ? "pending" : "idle");
+  return `<span class="status-pill ${autosaveStatusClass(status)}" data-save-status data-status="${escapeHtml(status)}">${escapeHtml(AUTOSAVE_LABELS[status] || status)}</span>`;
 }
 
 export function renderSavedProjects(state, compact = false) {
-  const projects = state.savedProjects;
+  const projects = Array.isArray(state.savedProjects) ? state.savedProjects : [];
   return `
-    <section class="card saved-projects${compact ? " compact" : ""}">
+    <section class="card saved-projects${compact ? " compact" : ""}" id="project-library">
       <div class="section-heading">
         <div>
-          <p class="section-kicker">IndexedDB 本地保存</p>
-          <h3>已保存项目</h3>
+          <p class="section-kicker">本地草稿</p>
+          <h3>打开已有项目</h3>
         </div>
         <span class="count-badge">${projects.length} 个</span>
       </div>
       ${projects.length === 0
-        ? '<p class="empty-state">还没有已保存项目。完成主流程后可在步骤 6 保存。</p>'
+        ? '<p class="empty-state">还没有本地项目。创建后会自动保存在当前浏览器。</p>'
         : `<ul class="record-list">
             ${projects.map((project) => `
               <li>

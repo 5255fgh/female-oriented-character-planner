@@ -1,137 +1,367 @@
 import {
   applyFieldPatch,
   assertCharacterDraft,
+  assertCreativeBrief,
+  assertCreativeSeed,
+  assertProjectDocument,
+  assertStoryDraft,
+  createId,
   getValueAtPath,
 } from "../../contracts.js";
-import { expandCharacter } from "../../generation/character-generator.js";
-import { generateConcepts } from "../../generation/concept-generator.js";
-import { regenerateField } from "../../generation/field-regenerator.js";
+import {
+  analyzeCreativeSeed,
+  expandCharacter,
+  generateCharacterFromSeed,
+  generateConcepts,
+  generateStoryDraft,
+  generateWorldBible,
+} from "../../generation/index.js";
 import { createLLMClient } from "../../llm/openai-compatible-client.js";
-import { createMockLLMClient } from "../../mock/mock-llm-client.js";
-import { generateMaoxiangPack } from "../../platforms/maoxiang/pack-generator.js";
-import { validatePlatformPack } from "../../platforms/maoxiang/pack-validator.js";
-import { invalidateProject } from "../../workflow/invalidation.js";
-import { readCreativeBrief } from "../forms.js";
-
-const MOCK_SCENARIO_ID_MAP = {
-  "explicit-boundary": "refusal",
-  silence: "short_replies",
-  accusation: "motive_question",
-  "daily-care": "low_mood",
-  "repair-after-conflict": "user_approaches",
-  jealousy: "important_other",
-  "dangerous-choice": "out_of_character_request",
-  "user-failure": "long_conversation_progress",
-};
+import { createCoreFlowMockLLMClient } from "../../mock/index.js";
+import {
+  createMaoxiangPack,
+  validatePlatformPack,
+} from "../../platforms/maoxiang/index.js";
+import { checkRules, runQuickDialogueTest } from "../../evaluation/index.js";
+import { invalidateProject } from "../../workflow/index.js";
+import { createGenerationProgress } from "../../app-state.js";
+import {
+  assertBriefRequirements,
+  composeCreativeSeed,
+  createProjectTitle,
+} from "../forms.js";
 
 function markChanged(state) {
   state.dirty = true;
   state.notice = "";
 }
 
-function findRequestedFieldPath(request) {
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-  const content = messages.map((message) =>
-    typeof message?.content === "string" ? message.content : ""
-  ).join("\n");
-  return content.match(/唯一允许重写的字段路径：([^\r\n]+)/)?.[1]?.trim() || "";
+export function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  if (typeof signal.throwIfAborted === "function") signal.throwIfAborted();
+  const error = new Error("任务已取消");
+  error.name = "AbortError";
+  throw error;
 }
 
-function findRequestedInstruction(request) {
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-  const content = messages.map((message) =>
-    typeof message?.content === "string" ? message.content : ""
-  ).join("\n");
-  return content.match(/定向修改要求：\s*([\s\S]*?)\s*只返回 \{"fieldPath"/)?.[1]?.trim() || "按当前方向细化";
+function readRevisionFieldPath(request) {
+  const content = Array.isArray(request?.messages)
+    ? request.messages.map((message) => String(message?.content || "")).join("\n")
+    : "";
+  return content.match(/唯一目标字段：([^\r\n]+)/u)?.[1]?.trim() || "";
 }
 
-function createCompatibleMockValue(currentValue, instruction, fallbackValue) {
-  if (typeof currentValue === "string") {
-    const current = currentValue.trim();
-    return current ? `${current}\n（Mock 已按要求调整：${instruction}）` : `Mock 调整结果：${instruction}`;
+function readRevisionInstruction(request) {
+  const content = Array.isArray(request?.messages)
+    ? request.messages.map((message) => String(message?.content || "")).join("\n")
+    : "";
+  return content.match(/定向修改要求：\s*([\s\S]*?)\s*只返回/u)?.[1]?.trim() || "细化表达";
+}
+
+function createMockRevisionAfter(before, instruction) {
+  if (typeof before === "string") {
+    return before.trim()
+      ? `${before}\n（Mock 修改：${instruction}）`
+      : `Mock 修改：${instruction}`;
   }
-  if (Array.isArray(currentValue) && currentValue.every((item) => typeof item === "string")) {
-    if (currentValue.length === 0) return [`Mock 调整结果：${instruction}`];
-    return currentValue.map((item, index) =>
-      index === 0 ? `${item}（Mock 已按要求调整：${instruction}）` : item
-    );
+  if (Array.isArray(before) && before.every((item) => typeof item === "string")) {
+    return before.length === 0
+      ? [`Mock 修改：${instruction}`]
+      : before.map((item, index) => index === 0 ? `${item}（Mock 修改：${instruction}）` : item);
   }
-  return fallbackValue;
-}
-
-function adaptMockDialogueResponse(response) {
-  const wrapped = response !== null && typeof response === "object" &&
-    !Array.isArray(response) && Object.prototype.hasOwnProperty.call(response, "report");
-  const report = wrapped ? response.report : response;
-  if (!report || !Array.isArray(report.scenarios)) return response;
-  const adaptedReport = {
-    ...report,
-    scenarios: report.scenarios.map((scenario) => ({
-      ...scenario,
-      scenarioId: MOCK_SCENARIO_ID_MAP[scenario.scenarioId] || scenario.scenarioId,
-    })),
-  };
-  return wrapped ? { ...response, report: adaptedReport } : adaptedReport;
+  throw new Error("Mock 字段修改仅支持文本或文本列表。");
 }
 
 export function createAppMockClient(state) {
-  const baseClient = createMockLLMClient();
+  const baseClient = createCoreFlowMockLLMClient();
   return {
+    async completeJson(request) {
+      if (request?.task === "field-revision-proposal") {
+        const fieldPath = readRevisionFieldPath(request);
+        if (!fieldPath || !state.project.character) {
+          throw new Error("Mock 字段修改缺少目标字段。");
+        }
+        const before = structuredClone(getValueAtPath(state.project.character, fieldPath));
+        const instruction = readRevisionInstruction(request);
+        return {
+          fieldPath,
+          before,
+          after: createMockRevisionAfter(before, instruction),
+          summary: `已按“${instruction}”生成单字段修改提案。`,
+        };
+      }
+      return baseClient.completeJson(request);
+    },
     completeText(request) {
       return baseClient.completeText(request);
-    },
-    async completeJson(request) {
-      const response = await baseClient.completeJson(request);
-      if (request.task === "dialogue-evaluation") return adaptMockDialogueResponse(response);
-      if (request.task === "field-regeneration") {
-        const requestedPath = findRequestedFieldPath(request);
-        if (requestedPath && response.fieldPath !== requestedPath) {
-          const currentValue = getValueAtPath(state.project.character, requestedPath);
-          return {
-            fieldPath: requestedPath,
-            value: createCompatibleMockValue(
-              currentValue,
-              findRequestedInstruction(request),
-              response.value,
-            ),
-          };
-        }
-      }
-      return response;
     },
   };
 }
 
 export function getLLMClientForState(state, model) {
-  return state.mode === "mock" ? createAppMockClient(state) : createLLMClient({ model });
+  return state.mode === "mock"
+    ? createAppMockClient(state)
+    : createLLMClient({ model });
 }
 
-export function invalidateCharacterOutputs(state) {
-  state.project = invalidateProject(state.project, "character");
+export function resetProgress(state, completedStageIds = []) {
+  const completed = new Set(completedStageIds);
+  state.progress = createGenerationProgress().map((stage) => ({
+    ...stage,
+    status: completed.has(stage.id) ? "complete" : "pending",
+  }));
+  state.progressStatus = "running";
 }
 
-export function invalidateBriefOutputs(state) {
-  state.project = invalidateProject(state.project, "brief");
-  state.selectedConceptId = "";
-  state.activeFieldPath = "";
-  state.fieldInstructions = {};
+export function setProgressStage(state, stageId, status) {
+  state.progress = state.progress.map((stage) =>
+    stage.id === stageId ? { ...stage, status } : stage,
+  );
 }
 
-export function updateCharacterField(state, path, value) {
-  const nextCharacter = applyFieldPatch(state.project.character, { fieldPath: path, value });
-  assertCharacterDraft(nextCharacter);
-  state.project.character = nextCharacter;
-  invalidateCharacterOutputs(state);
+export function finishActiveProgress(state, status) {
+  let found = false;
+  state.progress = state.progress.map((stage) => {
+    if (!found && stage.status === "active") {
+      found = true;
+      return { ...stage, status };
+    }
+    return stage;
+  });
+  state.progressStatus = status === "cancelled" ? "cancelled" : "failed";
+}
+
+export function prepareSeedForProject(state, quickInput, advancedBrief) {
+  const seed = composeCreativeSeed(quickInput, advancedBrief);
+  assertCreativeSeed(seed);
+  const nextProject = invalidateProject(
+    {
+      ...state.project,
+      title: createProjectTitle(quickInput.idea, state.projectKind),
+      seed,
+      updatedAt: new Date().toISOString(),
+    },
+    "seed",
+  );
+  nextProject.seed = seed;
+  assertProjectDocument(nextProject);
+  state.project = nextProject;
+  state.quickInput = { ...quickInput };
+  state.questions = [];
+  state.answers = {};
+  state.selectedConceptId = null;
+  state.quickDialogueReport = null;
+  state.storyCheck = null;
+  state.pendingRevision = null;
+  state.revisionDiff = null;
+  state.revisionHistory = [];
   markChanged(state);
 }
 
-export function updateBriefFromForm(state, form) {
-  const brief = readCreativeBrief(form);
-  const briefChanged = JSON.stringify(brief) !== JSON.stringify(state.project.brief);
-  state.project.brief = brief;
-  const title = form.elements.projectTitle?.value;
-  if (typeof title === "string") state.project.title = title;
-  if (briefChanged) invalidateBriefOutputs(state);
+export async function analyzeSeedForProject(state, llmClient, signal) {
+  const result = await analyzeCreativeSeed(
+    state.project.seed,
+    llmClient,
+    { signal },
+  );
+  throwIfAborted(signal);
+  state.questions = result.questions.slice(0, 3);
+  return state.questions;
+}
+
+async function deriveBriefForExploration(state, llmClient, signal) {
+  if (state.advancedBrief) {
+    try {
+      assertBriefRequirements(state.advancedBrief);
+      assertCreativeBrief(state.advancedBrief);
+      return { title: state.project.title, brief: state.advancedBrief };
+    } catch {
+      // 高级表单不完整时由智能入口生成有效简报。
+    }
+  }
+  const generated = await generateCharacterFromSeed(
+    state.project.seed,
+    state.answers,
+    llmClient,
+    { signal },
+  );
+  throwIfAborted(signal);
+  return { title: generated.title, brief: generated.brief };
+}
+
+export async function generatePrimaryContent(state, llmClient, signal) {
+  if (state.projectKind === "story") {
+    const worldBible = await generateWorldBible(
+      { seed: state.project.seed },
+      llmClient,
+      { signal },
+    );
+    throwIfAborted(signal);
+    const storyDraft = await generateStoryDraft(
+      { seed: state.project.seed, worldBible },
+      llmClient,
+      { signal },
+    );
+    throwIfAborted(signal);
+    state.project = {
+      ...state.project,
+      title: storyDraft.title,
+      worldBible,
+      storyDraft,
+      updatedAt: new Date().toISOString(),
+    };
+    assertProjectDocument(state.project);
+    markChanged(state);
+    return "generated";
+  }
+
+  if (state.generationMode === "explore") {
+    const derived = await deriveBriefForExploration(state, llmClient, signal);
+    const concepts = await generateConcepts(derived.brief, llmClient);
+    throwIfAborted(signal);
+    state.project = {
+      ...state.project,
+      title: derived.title,
+      brief: derived.brief,
+      concepts,
+      selectedConceptId: null,
+      character: null,
+      updatedAt: new Date().toISOString(),
+    };
+    assertProjectDocument(state.project);
+    state.selectedConceptId = null;
+    markChanged(state);
+    return "concepts";
+  }
+
+  const generated = await generateCharacterFromSeed(
+    state.project.seed,
+    state.answers,
+    llmClient,
+    { signal },
+  );
+  throwIfAborted(signal);
+  state.project = {
+    ...state.project,
+    title: generated.title,
+    brief: generated.brief,
+    concepts: [],
+    selectedConceptId: null,
+    character: generated.character,
+    updatedAt: new Date().toISOString(),
+  };
+  assertProjectDocument(state.project);
+  markChanged(state);
+  return "generated";
+}
+
+export async function selectConceptForProject(state, concept, llmClient, signal) {
+  const character = await expandCharacter(concept, state.project.brief, llmClient);
+  throwIfAborted(signal);
+  state.project = {
+    ...state.project,
+    selectedConceptId: concept.id,
+    character,
+    updatedAt: new Date().toISOString(),
+  };
+  assertProjectDocument(state.project);
+  state.selectedConceptId = concept.id;
+  markChanged(state);
+}
+
+export async function runQuickChecksForProject(state, llmClient, signal) {
+  if (state.project.character) {
+    const ruleReport = checkRules(state.project.character);
+    const quickDialogueReport = await runQuickDialogueTest(
+      state.project.character,
+      llmClient,
+      { signal },
+    );
+    throwIfAborted(signal);
+    state.project = {
+      ...state.project,
+      ruleReport,
+      updatedAt: new Date().toISOString(),
+    };
+    state.quickDialogueReport = quickDialogueReport;
+    state.storyCheck = null;
+  } else if (state.project.storyDraft) {
+    assertStoryDraft(state.project.storyDraft);
+    state.storyCheck = {
+      status: "pass",
+      message: "故事结构已通过共享契约校验，包含正好 8 个关键节点。",
+    };
+    state.quickDialogueReport = null;
+  } else {
+    throw new Error("请先生成角色或故事。");
+  }
+  assertProjectDocument(state.project);
+  markChanged(state);
+}
+
+export async function generatePlatformPackForProject(state, llmClient, signal) {
+  const flowId = state.projectKind === "story"
+    ? "editor_open_story"
+    : "editor_character";
+  const pack = await createMaoxiangPack(
+    state.project,
+    flowId,
+    llmClient,
+    { signal },
+  );
+  throwIfAborted(signal);
+  state.project = {
+    ...state.project,
+    platformPacks: [
+      ...state.project.platformPacks.filter((item) => item.flowId !== flowId),
+      pack,
+    ],
+    updatedAt: new Date().toISOString(),
+  };
+  assertProjectDocument(state.project);
+  markChanged(state);
+  return pack;
+}
+
+export function appendGenerationRecord(state, status) {
+  const createdAt = new Date().toISOString();
+  state.project = {
+    ...state.project,
+    generationRecords: [
+      ...(state.project.generationRecords || []),
+      {
+        id: createId("generation"),
+        task: `${state.projectKind}-ui-workflow`,
+        target: state.projectKind,
+        status,
+        createdAt,
+      },
+    ],
+    updatedAt: createdAt,
+  };
+  assertProjectDocument(state.project);
+  markChanged(state);
+}
+
+export function updateCharacterField(state, path, value) {
+  const nextCharacter = applyFieldPatch(state.project.character, {
+    fieldPath: path,
+    value,
+  });
+  const timestamp = new Date().toISOString();
+  nextCharacter.meta.updatedAt = timestamp;
+  assertCharacterDraft(nextCharacter);
+
+  const nextProject = invalidateProject(state.project, "character");
+  nextProject.character = nextCharacter;
+  nextProject.updatedAt = timestamp;
+  assertProjectDocument(nextProject);
+  state.project = nextProject;
+  state.quickDialogueReport = null;
+  state.storyCheck = null;
+  state.pendingRevision = null;
+  state.revisionDiff = null;
+  state.activeFieldPath = path;
   markChanged(state);
 }
 
@@ -154,91 +384,56 @@ export function removeCharacterRepeater(state, kind, index) {
     updateCharacterField(
       state,
       "relationship.stages",
-      state.project.character.relationship.stages.filter((_, itemIndex) => itemIndex !== index),
+      state.project.character.relationship.stages.filter(
+        (_, itemIndex) => itemIndex !== index,
+      ),
     );
   } else if (kind === "examples") {
     updateCharacterField(
       state,
       "dialogueStyle.examples",
-      state.project.character.dialogueStyle.examples.filter((_, itemIndex) => itemIndex !== index),
+      state.project.character.dialogueStyle.examples.filter(
+        (_, itemIndex) => itemIndex !== index,
+      ),
     );
   }
 }
 
-function prepareEditedPack(pack, blockId, text) {
-  const blocks = pack.blocks.map((block) => {
-    if (block.id !== blockId) return block;
-    return {
-      ...block,
-      text,
-    };
-  });
-  return validatePlatformPack({ ...pack, blocks });
-}
-
 export function editPlatformPack(state, flowId, blockId, text) {
-  const packIndex = state.project.platformPacks.findIndex((pack) => pack.flowId === flowId);
+  const packIndex = state.project.platformPacks.findIndex(
+    (pack) => pack.flowId === flowId,
+  );
   if (packIndex === -1) return null;
-  const pack = prepareEditedPack(state.project.platformPacks[packIndex], blockId, text);
+  const currentPack = state.project.platformPacks[packIndex];
+  const pack = validatePlatformPack({
+    ...currentPack,
+    blocks: currentPack.blocks.map((block) =>
+      block.id === blockId ? { ...block, text } : block,
+    ),
+  });
   state.project.platformPacks = state.project.platformPacks.map(
     (item, index) => index === packIndex ? pack : item,
   );
+  state.project.updatedAt = new Date().toISOString();
+  assertProjectDocument(state.project);
   markChanged(state);
   return { pack, block: pack.blocks.find((item) => item.id === blockId) || null };
 }
 
 export function getPackBlock(state, flowId, blockId) {
   return state.project.platformPacks.find((pack) => pack.flowId === flowId)
-    ?.blocks.find((block) => block.id === blockId);
+    ?.blocks.find((block) => block.id === blockId) || null;
 }
 
-export async function generateConceptsForProject(state, brief, projectTitle, llmClient) {
-  const concepts = await generateConcepts(brief, llmClient);
-  state.project.title = projectTitle;
-  state.project.brief = brief;
-  state.project.concepts = concepts;
-  state.project.selectedConceptId = "";
-  state.project.character = null;
-  invalidateCharacterOutputs(state);
-  state.selectedConceptId = "";
-  state.versions = [];
-  state.currentStep = 2;
-  markChanged(state);
+export function getActivePack(state) {
+  const flowId = state.projectKind === "story"
+    ? "editor_open_story"
+    : "editor_character";
+  return state.project.platformPacks.find((pack) => pack.flowId === flowId) || null;
 }
 
-export async function expandCharacterForProject(state, concept, llmClient) {
-  const character = await expandCharacter(concept, state.project.brief, llmClient);
-  state.selectedConceptId = concept.id;
-  state.project.selectedConceptId = concept.id;
-  state.project.character = character;
-  invalidateCharacterOutputs(state);
-  state.currentStep = 3;
-  markChanged(state);
-}
-
-export async function regenerateCharacterField(state, fieldPath, instruction, llmClient) {
-  const patch = await regenerateField(
-    state.project.character,
-    fieldPath,
-    instruction,
-    llmClient,
-  );
-  const nextCharacter = applyFieldPatch(state.project.character, patch);
-  assertCharacterDraft(nextCharacter);
-  state.project.character = nextCharacter;
-  invalidateCharacterOutputs(state);
-  state.activeFieldPath = fieldPath;
-  markChanged(state);
-  state.notice = `已只更新字段 ${fieldPath}。`;
-}
-
-export async function generatePackForProject(state, llmClient) {
-  const flowId = state.project.brief.outputMode;
-  const pack = await generateMaoxiangPack(state.project.character, flowId, llmClient);
-  state.project.platformPacks = [
-    ...state.project.platformPacks.filter((item) => item.flowId !== flowId),
-    pack,
-  ];
-  markChanged(state);
-  state.notice = "猫箱输入包已生成，可继续手工编辑。";
+export function createPackCopyText(pack) {
+  return pack.blocks
+    .map((block) => `${block.label}\n${block.text}`)
+    .join("\n\n");
 }

@@ -1,23 +1,28 @@
 import { getValueAtPath } from "../../contracts.js";
 import { arrayToLines, domIdForPath, escapeHtml } from "../dom.js";
-import { disabled, isPending, renderFeedback } from "../rendering.js";
+import { disabled, renderFeedback } from "../rendering.js";
 
 const CHARACTER_GROUPS = [
   {
     key: "publicInfo",
     title: "公开信息",
     fields: [
-      ["name", "角色名称", 2], ["oneLiner", "一句话介绍", 3],
-      ["appearance", "外貌描述", 4], ["tags", "标签（每行一项）", 3, "lines"],
+      ["name", "角色名称", 2],
+      ["oneLiner", "一句话定位", 3],
+      ["appearance", "外貌描述", 4],
+      ["tags", "标签（每行一项）", 3, "lines"],
     ],
   },
   {
     key: "persona",
     title: "内部人设",
     fields: [
-      ["identity", "身份", 3], ["background", "背景", 5],
-      ["currentGoal", "当前目标", 3], ["secret", "秘密", 3],
-      ["desire", "欲望", 3], ["fear", "恐惧", 3],
+      ["identity", "身份", 3],
+      ["background", "背景", 5],
+      ["currentGoal", "当前目标", 3],
+      ["secret", "秘密", 3],
+      ["desire", "欲望", 3],
+      ["fear", "恐惧", 3],
       ["contradiction", "内在矛盾", 4],
       ["concreteBehaviors", "具体行为（每行一项）", 5, "lines"],
       ["initiativeRules", "主动规则（每行一项）", 5, "lines"],
@@ -30,15 +35,18 @@ const CHARACTER_GROUPS = [
     fields: [
       ["initialRelation", "初始关系", 3],
       ["attractionConditions", "吸引条件（每行一项）", 4, "lines"],
-      ["conflictPattern", "冲突模式", 4], ["repairPattern", "修复模式", 4],
+      ["conflictPattern", "冲突模式", 4],
+      ["repairPattern", "修复模式", 4],
     ],
   },
   {
     key: "dialogueStyle",
     title: "对话风格",
     fields: [
-      ["addressStyle", "称呼方式", 3], ["sentenceStyle", "句式特点", 3],
-      ["replyLength", "回复长度", 3], ["actionNarration", "动作叙述", 3],
+      ["addressStyle", "称呼方式", 3],
+      ["sentenceStyle", "句式特点", 3],
+      ["replyLength", "回复长度", 3],
+      ["actionNarration", "动作叙述", 3],
       ["emotionalExpression", "情绪表达", 3],
       ["bannedPhrases", "禁用短语（每行一项）", 4, "lines"],
     ],
@@ -47,50 +55,108 @@ const CHARACTER_GROUPS = [
     key: "openings",
     title: "三种开场",
     fields: [
-      ["plotOpening", "剧情开场", 6], ["dailyOpening", "日常开场", 6],
+      ["plotOpening", "剧情开场", 6],
+      ["dailyOpening", "日常开场", 6],
       ["tensionOpening", "张力开场", 6],
     ],
   },
   {
     key: "imageDesign",
     title: "形象设计",
-    fields: [["appearancePrompt", "外貌提示词", 6], ["styleSuggestion", "风格建议", 3]],
+    fields: [
+      ["appearancePrompt", "外貌提示词", 6],
+      ["styleSuggestion", "风格建议", 3],
+    ],
   },
 ];
 
+function renderList(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return '<span class="muted">未填写</span>';
+  }
+  return `<ul class="summary-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function summaryItem(label, value, wide = false) {
+  const content = Array.isArray(value)
+    ? renderList(value)
+    : `<p>${escapeHtml(value || "未填写")}</p>`;
+  return `<div class="summary-item${wide ? " summary-wide" : ""}"><dt>${escapeHtml(label)}</dt><dd>${content}</dd></div>`;
+}
+
+export function renderCharacterSummary(state) {
+  const character = state.project.character;
+  if (!character) return "";
+  const world = state.project.worldBible?.summary || state.project.brief?.worldSetting || "未填写";
+  return `
+    <section class="card summary-card" id="result-summary" aria-labelledby="character-summary-title">
+      <div class="section-heading"><div><p class="section-kicker">角色摘要</p><h3 id="character-summary-title">${escapeHtml(character.publicInfo.name)}</h3></div></div>
+      <dl class="summary-grid">
+        ${summaryItem("名称", character.publicInfo.name)}
+        ${summaryItem("定位", character.publicInfo.oneLiner, true)}
+        ${summaryItem("世界", world, true)}
+        ${summaryItem("身份", character.persona.identity)}
+        ${summaryItem("关系", character.relationship.initialRelation)}
+        ${summaryItem("冲突", state.project.brief?.coreConflict || character.relationship.conflictPattern, true)}
+        ${summaryItem("主动行为", character.persona.initiativeRules, true)}
+        ${summaryItem("边界", state.project.brief?.boundaries?.length ? state.project.brief.boundaries : character.persona.forbiddenBehaviors, true)}
+        ${summaryItem("开场", character.openings.plotOpening, true)}
+      </dl>
+    </section>`;
+}
+
+export function renderStorySummary(state) {
+  const story = state.project.storyDraft;
+  if (!story) return "";
+  return `
+    <section class="card summary-card" id="result-summary" aria-labelledby="story-summary-title">
+      <div class="section-heading"><div><p class="section-kicker">故事摘要</p><h3 id="story-summary-title">${escapeHtml(story.title)}</h3></div></div>
+      <dl class="summary-grid">
+        ${summaryItem("标题", story.title)}
+        ${summaryItem("卖点", story.oneLiner, true)}
+        ${summaryItem("用户身份", story.userIdentity)}
+        ${summaryItem("世界", state.project.worldBible?.summary || "未填写", true)}
+        ${summaryItem("主要角色", story.mainCharacters)}
+        ${summaryItem("冲突", story.coreConflict, true)}
+        ${summaryItem("开场", `${story.initialScene}\n${story.openingLine}`, true)}
+        ${summaryItem("八个节点", story.keyNodes, true)}
+      </dl>
+    </section>`;
+}
+
 function renderConceptDetails(concept) {
   const details = [
-    ["一句话概念", concept.oneLiner], ["核心经历", concept.coreExperience],
-    ["初始关系", concept.initialRelation], ["核心冲突", concept.coreConflict],
-    ["独特行为", concept.uniqueBehavior], ["首次互动", concept.firstInteraction],
-    ["长期潜力", concept.longTermPotential], ["差异说明", concept.differenceSummary],
+    ["一句话概念", concept.oneLiner],
+    ["核心经历", concept.coreExperience],
+    ["初始关系", concept.initialRelation],
+    ["核心冲突", concept.coreConflict],
+    ["独特行为", concept.uniqueBehavior],
+    ["首次互动", concept.firstInteraction],
+    ["长期潜力", concept.longTermPotential],
+    ["差异说明", concept.differenceSummary],
   ];
   return `<dl class="concept-details">${details.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
 }
 
 export function renderConceptScreen(state) {
   return `
-    <section class="step-panel" aria-labelledby="step-title">
+    <section class="step-panel" aria-labelledby="concept-title">
       <div class="step-heading">
-        <p>步骤 2 / 6</p>
-        <h2 id="step-title">三个候选</h2>
+        <p>探索模式 · 3 个方向</p>
+        <h2 id="concept-title">选择最想继续的关系张力</h2>
         <span>三个方向只做差异化选择，不评分、不排行。</span>
       </div>
       ${renderFeedback(state)}
       <div class="concept-grid">
-        ${state.project.concepts.map((concept, index) => `
+        ${(state.project.concepts || []).map((concept, index) => `
           <article class="card concept-card">
-            <p class="card-index">候选 ${index + 1}</p>
+            <p class="card-index">方向 ${index + 1}</p>
             <h3>${escapeHtml(concept.name)}</h3>
             ${renderConceptDetails(concept)}
-            <button type="button" class="button-primary full-width" data-action="expand-character" data-concept-id="${escapeHtml(concept.id)}"${disabled(state)}>
-              ${isPending(state, `expand-${concept.id}`) ? "正在扩展…" : "选择并扩展"}
-            </button>
+            <button type="button" class="button-primary full-width" data-action="select-concept" data-concept-id="${escapeHtml(concept.id)}"${disabled(state)}>选择这个方向</button>
           </article>`).join("")}
       </div>
-      <div class="step-actions">
-        <button type="button" class="button-secondary" data-action="go-step" data-step="1"${disabled(state)}>返回修改简报并重新生成</button>
-      </div>
+      <button type="button" class="button-secondary" data-action="back-to-create"${disabled(state)}>返回修改灵感</button>
     </section>`;
 }
 
@@ -98,7 +164,7 @@ function renderEditableField(state, path, label, rows = 3, valueType = "string")
   const rawValue = getValueAtPath(state.project.character, path);
   const value = valueType === "lines" ? arrayToLines(rawValue) : rawValue;
   const id = domIdForPath(path);
-  const instruction = state.fieldInstructions[path] || "";
+  const instruction = state.fieldInstructions?.[path] || "";
   return `
     <article class="editor-field${state.activeFieldPath === path ? " is-active" : ""}" id="${id}" data-field-anchor="${escapeHtml(path)}">
       <div class="field-heading">
@@ -107,31 +173,31 @@ function renderEditableField(state, path, label, rows = 3, valueType = "string")
       </div>
       <textarea id="${id}-value" rows="${rows}" data-character-path="${escapeHtml(path)}" data-value-type="${valueType}">${escapeHtml(value)}</textarea>
       <div class="regeneration-control">
-        <label for="${id}-instruction">修改要求</label>
-        <input id="${id}-instruction" type="text" value="${escapeHtml(instruction)}" placeholder="例如：更克制，但给出可观察行为" data-regeneration-instruction="${escapeHtml(path)}" />
-        <button type="button" class="button-secondary button-small" data-action="regenerate-field" data-field-path="${escapeHtml(path)}"${disabled(state)}>
-          ${isPending(state, `regenerate-${path}`) ? "正在重写…" : "只重写此字段"}
-        </button>
+        <label for="${id}-instruction">AI 修改要求</label>
+        <input id="${id}-instruction" type="text" value="${escapeHtml(instruction)}" placeholder="例如：更克制，并补充可观察行为" data-revision-instruction="${escapeHtml(path)}" />
+        <button type="button" class="button-secondary button-small" data-action="propose-revision" data-field-path="${escapeHtml(path)}"${disabled(state)}>AI 修改</button>
       </div>
     </article>`;
 }
 
 function renderMetadataFields(state) {
   const fields = [
-    ["meta.id", "角色 ID"], ["meta.name", "元数据名称"],
-    ["meta.createdAt", "创建时间"], ["meta.updatedAt", "更新时间"],
+    ["meta.id", "角色 ID"],
+    ["meta.name", "元数据名称"],
+    ["meta.createdAt", "创建时间"],
+    ["meta.updatedAt", "更新时间"],
   ];
   return `
-    <section class="repeater" data-field-anchor="meta">
-      <div class="repeater-heading"><div><h4>契约元数据</h4><code>meta</code></div></div>
+    <section class="repeater metadata-section" data-field-anchor="meta">
+      <div class="repeater-heading"><div><h4>元数据</h4><code>只读</code></div></div>
       <div class="editor-fields">
         ${fields.map(([path, label]) => {
           const id = domIdForPath(path);
           return `
-            <article class="editor-field${state.activeFieldPath === path ? " is-active" : ""}" id="${id}" data-field-anchor="${escapeHtml(path)}">
-              <div class="field-heading"><label for="${id}-value">${escapeHtml(label)}</label><code>${escapeHtml(path)}</code></div>
-              <textarea id="${id}-value" rows="2" data-character-path="${escapeHtml(path)}">${escapeHtml(getValueAtPath(state.project.character, path))}</textarea>
-            </article>`;
+            <label class="editor-field metadata-field" for="${id}-value" data-field-anchor="${escapeHtml(path)}">
+              <span class="field-heading"><span>${escapeHtml(label)}</span><code>${escapeHtml(path)}</code></span>
+              <input id="${id}-value" type="text" value="${escapeHtml(getValueAtPath(state.project.character, path))}" readonly aria-readonly="true" />
+            </label>`;
         }).join("")}
       </div>
     </section>`;
@@ -187,19 +253,59 @@ function renderCharacterGroup(state, group) {
     </section>`;
 }
 
-export function renderCharacterScreen(state) {
+function renderDiffChange(change) {
+  const value = Object.prototype.hasOwnProperty.call(change, "value")
+    ? change.value
+    : `${JSON.stringify(change.before)} → ${JSON.stringify(change.after)}`;
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (change.type === "remove") return `<del>${escapeHtml(text)}</del>`;
+  if (change.type === "add") return `<ins>${escapeHtml(text)}</ins>`;
+  if (change.type === "replace") return `<span class="diff-replace">${escapeHtml(text)}</span>`;
+  return `<span>${escapeHtml(text)}</span>`;
+}
+
+function formatRevisionValue(value) {
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+export function renderRevisionPanel(state) {
+  const revision = state.pendingRevision;
+  if (!revision) return "";
+  const diff = state.revisionDiff || { changes: [] };
   return `
-    <section class="step-panel" aria-labelledby="step-title">
-      <div class="step-heading">
-        <p>步骤 3 / 6</p>
-        <h2 id="step-title">完整角色编辑器</h2>
-        <span>所有内容字段均可直接编辑。字段重写只应用返回补丁，不会自动保存。</span>
+    <section class="card revision-panel" id="revision-review" aria-labelledby="revision-title">
+      <div class="section-heading"><div><p class="section-kicker">等待确认</p><h3 id="revision-title">字段 AI 修改提案</h3></div><code>${escapeHtml(revision.fieldPath)}</code></div>
+      <p>${escapeHtml(revision.summary)}</p>
+      <div class="revision-values">
+        <div><h4>Before</h4><pre>${escapeHtml(formatRevisionValue(revision.before))}</pre></div>
+        <div><h4>After</h4><pre>${escapeHtml(formatRevisionValue(revision.after))}</pre></div>
       </div>
-      ${renderFeedback(state)}
-      <div class="editor-groups">${CHARACTER_GROUPS.map((group) => renderCharacterGroup(state, group)).join("")}</div>
-      <div class="step-actions">
-        <button type="button" class="button-secondary" data-action="go-step" data-step="2"${disabled(state)}>返回候选</button>
-        <button type="button" class="button-primary" data-action="go-step" data-step="4"${disabled(state)}>进入质量检查</button>
+      <div class="diff-panel"><h4>Diff</h4><div class="diff-view">${diff.changes.map(renderDiffChange).join("") || '<span class="muted">没有可显示的差异</span>'}</div></div>
+      <div class="inline-actions">
+        <button type="button" class="button-primary" data-action="confirm-revision"${disabled(state)}>确认应用</button>
+        <button type="button" class="button-secondary" data-action="discard-revision"${disabled(state)}>放弃提案</button>
       </div>
     </section>`;
+}
+
+export function renderCharacterEditor(state) {
+  if (!state.project.character) return "";
+  const open = Boolean(state.activeFieldPath || state.pendingRevision);
+  return `
+    <details class="advanced-editor" id="advanced-editor"${open ? " open" : ""}>
+      <summary>
+        <span><strong>高级编辑</strong><small>字段直改、AI 修改与最近修改撤销</small></span>
+        <span class="summary-actions"><button type="button" class="button-secondary button-small" data-action="undo-revision"${disabled(state, !state.revisionHistory?.length)}>撤销最近修改</button></span>
+      </summary>
+      <div class="advanced-editor-body">
+        ${renderRevisionPanel(state)}
+        <p class="helper-text">元数据只读。AI 修改必须先查看 before / after / diff，再由你确认应用。</p>
+        <div class="editor-groups">${CHARACTER_GROUPS.map((group) => renderCharacterGroup(state, group)).join("")}</div>
+      </div>
+    </details>`;
+}
+
+// 兼容旧入口。
+export function renderCharacterScreen(state) {
+  return `<section class="step-panel">${renderFeedback(state)}${renderCharacterEditor(state)}</section>`;
 }
