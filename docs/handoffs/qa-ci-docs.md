@@ -57,12 +57,14 @@ Prompt fixture 由 `tests/contracts/prompt-fixtures.mjs` 和对应测试覆盖�
 - `npm test` — passed；59 tests，57 passed，0 failed，2 todo。
 - `npm run smoke` — passed；`Smoke checks passed.`。
 - `npm run build` — passed；Vite 7.3.6，55 modules transformed。
+- GitHub Actions `CI` run `30693816096` — Node 20 与 Node 22 均 passed。
 
 两个 `todo` 与下方已知生产缺陷一一对应；“已知缺口清单”本身是通过的强断言，新增未登记缺口会失败。
 
 ## Integration Notes
 
 - 本分支从 `integration/intelligent-v2` 的 `bc2683147c1edd17efeb9719e9047ba1a13bc5cb` 创建。
+- Draft PR：`#6`，目标分支 `integration/intelligent-v2`。
 - 最终集成合入 UI 后，应复查 README 中“UI 与最终集成仍在接线”的状态表述，并按实际界面改为可用入口说明；当前文档没有预先宣称并行 UI 已完成。
 - 若最终集成修复 Prompt 缺口，应同时更新 `KNOWN_RUNTIME_VERSION_GAPS`、`KNOWN_MODEL_METADATA_GAPS`；对应 `todo` 应转为普通通过测试，不能直接删除断言。
 - CI 只使用 Mock 和本地 fixture，不需要 API Key 或真实网络模型。
@@ -88,5 +90,4 @@ Prompt fixture 由 `tests/contracts/prompt-fixtures.mjs` 和对应测试覆盖�
 ## Real Open Issues
 
 - 已确认猫箱规则的原始截图、可审计链接和复核日期仍未入库，`verifiedAt` 只能保持 `null`。
-- GitHub-hosted Node 20/22 矩阵要在推送后由 Actions 实际执行；本地已完成同一命令链验证。
 - README 的最终界面入口、截图和交互措辞必须在并行 UI 分支合入后复核。
