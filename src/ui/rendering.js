@@ -53,6 +53,8 @@ export function renderFeedback(state) {
   const showGenericLoading = state.loading && state.currentStep !== "progress";
   const canCancelRequest = showGenericLoading && (
     state.pendingAction === "full-simulation" ||
+    state.pendingAction === "quick-check" ||
+    state.pendingAction === "generate-platform-pack" ||
     String(state.pendingAction || "").startsWith("revision-")
   );
   return `

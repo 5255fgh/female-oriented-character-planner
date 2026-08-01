@@ -517,7 +517,7 @@ export function applyConfirmedRevision(project, revision) {
 }
 
 /**
- * 撤销最近一次字段修改；只恢复字段值，不恢复已经失效的旧评估或平台产物。
+ * 撤销最近一次字段修改；只恢复字段值，旧评估和平台产物继续保留供对照。
  *
  * @param {import("../contracts.js").ProjectDocument} project
  * @param {RevisionHistoryEntry[]} history

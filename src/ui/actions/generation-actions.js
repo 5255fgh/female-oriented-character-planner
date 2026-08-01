@@ -299,6 +299,7 @@ export async function selectConceptForProject(state, concept, llmClient, signal)
 }
 
 export async function runQuickChecksForProject(state, llmClient, signal) {
+  const completedAt = new Date().toISOString();
   if (state.project.character) {
     const ruleReport = checkRules(state.project.character);
     const quickDialogueReport = await runQuickDialogueTest(
@@ -310,7 +311,17 @@ export async function runQuickChecksForProject(state, llmClient, signal) {
     state.project = {
       ...state.project,
       ruleReport,
-      updatedAt: new Date().toISOString(),
+      generationRecords: [
+        ...state.project.generationRecords,
+        {
+          id: createId("generation"),
+          task: "quick-check",
+          target: "character",
+          status: "completed",
+          createdAt: completedAt,
+        },
+      ],
+      updatedAt: completedAt,
     };
     state.quickDialogueReport = quickDialogueReport;
     state.storyCheck = null;
@@ -321,6 +332,20 @@ export async function runQuickChecksForProject(state, llmClient, signal) {
       message: "故事结构已通过共享契约校验，包含正好 8 个关键节点。",
     };
     state.quickDialogueReport = null;
+    state.project = {
+      ...state.project,
+      generationRecords: [
+        ...state.project.generationRecords,
+        {
+          id: createId("generation"),
+          task: "story-check",
+          target: "story",
+          status: "completed",
+          createdAt: completedAt,
+        },
+      ],
+      updatedAt: completedAt,
+    };
   } else {
     throw new Error("请先生成角色或故事。");
   }
@@ -328,10 +353,19 @@ export async function runQuickChecksForProject(state, llmClient, signal) {
   markChanged(state);
 }
 
-export async function generatePlatformPackForProject(state, llmClient, signal) {
-  const flowId = state.projectKind === "story"
-    ? "editor_open_story"
-    : "editor_character";
+export async function generatePlatformPackForProject(
+  state,
+  llmClient,
+  signal,
+  requestedFlowId,
+) {
+  const supportedFlowIds = state.projectKind === "story"
+    ? ["editor_open_story"]
+    : ["editor_character", "free_character", "dead_rival", "image_shape"];
+  const flowId = requestedFlowId || supportedFlowIds[0];
+  if (!supportedFlowIds.includes(flowId)) {
+    throw new Error(`当前项目不支持猫箱入口：${String(flowId)}`);
+  }
   const pack = await createMaoxiangPack(
     state.project,
     flowId,
@@ -386,12 +420,12 @@ export function updateCharacterField(state, path, value) {
   nextProject.updatedAt = timestamp;
   assertProjectDocument(nextProject);
   state.project = nextProject;
-  state.quickDialogueReport = null;
   state.storyCheck = null;
   state.pendingRevision = null;
   state.revisionDiff = null;
   state.activeFieldPath = path;
   markChanged(state);
+  state.notice = "字段已更新；旧检查与平台文本已保留，并标记为可能已过期。";
 }
 
 export function addCharacterRepeater(state, kind) {
@@ -454,10 +488,10 @@ export function getPackBlock(state, flowId, blockId) {
     ?.blocks.find((block) => block.id === blockId) || null;
 }
 
-export function getActivePack(state) {
-  const flowId = state.projectKind === "story"
+export function getActivePack(state, requestedFlowId) {
+  const flowId = requestedFlowId || (state.projectKind === "story"
     ? "editor_open_story"
-    : "editor_character";
+    : "editor_character");
   return state.project.platformPacks.find((pack) => pack.flowId === flowId) || null;
 }
 

@@ -147,6 +147,7 @@ const PROGRESS_STATUS_LABELS = {
   pending: "等待",
   active: "进行中",
   complete: "完成",
+  skipped: "按需运行",
   failed: "失败",
   cancelled: "已取消",
 };

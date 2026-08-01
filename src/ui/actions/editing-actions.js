@@ -8,11 +8,6 @@ import {
 } from "../../editing/index.js";
 import { selectContextForField } from "../../generation/index.js";
 
-function clearDownstreamUiState(state) {
-  state.quickDialogueReport = null;
-  state.storyCheck = null;
-}
-
 export async function proposeCharacterRevision(
   state,
   fieldPath,
@@ -49,9 +44,8 @@ export function confirmCharacterRevision(state) {
   state.activeFieldPath = state.pendingRevision.fieldPath;
   state.pendingRevision = null;
   state.revisionDiff = null;
-  clearDownstreamUiState(state);
   state.dirty = true;
-  state.notice = "字段修改已应用；快速检查与平台文本需要重新生成。";
+  state.notice = "字段修改已应用；旧检查与平台文本已保留，并标记为可能已过期。";
   assertProjectDocument(state.project);
   return result.historyEntry;
 }
@@ -68,8 +62,7 @@ export function undoLastCharacterRevision(state) {
   state.revisionHistory = result.history;
   state.pendingRevision = null;
   state.revisionDiff = null;
-  clearDownstreamUiState(state);
   state.dirty = true;
-  state.notice = "最近一次已确认修改已撤销。";
+  state.notice = "最近一次已确认修改已撤销；旧检查与平台文本仍保留供对照。";
   assertProjectDocument(state.project);
 }

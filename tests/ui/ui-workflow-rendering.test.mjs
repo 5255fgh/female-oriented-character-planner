@@ -14,6 +14,7 @@ import {
   renderRevisionPanel,
   renderStorySummary,
 } from "../../src/ui/screens/character-screen.js";
+import { renderQuickCheck } from "../../src/ui/screens/evaluation-screen.js";
 import { renderPlatformOutput } from "../../src/ui/screens/output-screen.js";
 import {
   renderAutosavePill,
@@ -59,6 +60,10 @@ function createBriefFixture() {
 function createCharacterResultState() {
   const state = createInitialAppState();
   const timestamp = "2026-08-01T00:00:00.000Z";
+  const characterSnapshot = structuredClone(character);
+  characterSnapshot.meta.updatedAt = timestamp;
+  const platformPackSnapshot = structuredClone(platformPack);
+  platformPackSnapshot.generatedAt = timestamp;
   state.currentStep = "result";
   state.projectKind = "character";
   state.autosaveStatus = "saved";
@@ -69,7 +74,7 @@ function createCharacterResultState() {
     brief: createBriefFixture(),
     concepts: [],
     selectedConceptId: null,
-    character: structuredClone(character),
+    character: characterSnapshot,
     worldBible: null,
     storyDraft: null,
     ruleReport: {
@@ -86,8 +91,14 @@ function createCharacterResultState() {
       ],
     },
     simulationReport: null,
-    platformPacks: [structuredClone(platformPack)],
-    generationRecords: [],
+    platformPacks: [platformPackSnapshot],
+    generationRecords: [{
+      id: "generation-quick-check",
+      task: "quick-check",
+      target: "character",
+      status: "completed",
+      createdAt: timestamp,
+    }],
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -184,6 +195,43 @@ test("warning 不阻止有效平台字段复制", () => {
   assert.equal(state.project.ruleReport.status, "warning");
 });
 
+test("角色项目可分别生成四种输入包且不要求先运行检查", () => {
+  const state = createCharacterResultState();
+  state.project.ruleReport = null;
+  state.quickDialogueReport = null;
+  const html = renderPlatformOutput(state);
+
+  for (const flowId of [
+    "editor_character",
+    "free_character",
+    "dead_rival",
+    "image_shape",
+  ]) {
+    assert.match(
+      html,
+      new RegExp(`data-action="generate-platform-pack"[^>]+data-pack-flow="${flowId}"`),
+    );
+  }
+  assert.match(html, /输入包可独立生成，不要求先运行质量检查/);
+});
+
+test("未知平台上限使用中性提示且不阻止复制", () => {
+  const state = createCharacterResultState();
+  const block = state.project.platformPacks[0].blocks[0];
+  Object.assign(block, {
+    maxLength: null,
+    verified: false,
+    valid: true,
+  });
+  const html = renderPlatformOutput(state);
+  const copyButton = html.match(/<button[^>]+data-action="copy-pack-block"[^>]*>/)?.[0];
+
+  assert.match(html, /平台上限尚未核验/);
+  assert.doesNotMatch(html, /上限未确认|限制未确认/);
+  assert.match(copyButton, /data-copy-valid="true"/);
+  assert.doesNotMatch(copyButton, / disabled/);
+});
+
 test("规则 error 会阻止复制，但不把平台字段伪装成超限", () => {
   const state = createCharacterResultState();
   state.project.ruleReport = {
@@ -205,6 +253,32 @@ test("规则 error 会阻止复制，但不把平台字段伪装成超限", () =
   assert.match(copyButton, / disabled/);
   assert.match(html, /固定规则仍有错误/);
   assert.match(html, /data-pack-validity="valid"/);
+});
+
+test("角色修改后保留旧检查和输入包并标记可能已过期", () => {
+  const state = createCharacterResultState();
+  state.project.ruleReport = {
+    status: "fail",
+    issues: [{
+      code: "old-error",
+      severity: "error",
+      fieldPath: "persona.currentGoal",
+      message: "旧检查错误。",
+      evidence: "旧证据。",
+      suggestedAction: "重新检查。",
+    }],
+  };
+  state.project.character.meta.updatedAt = "2026-08-01T01:00:00.000Z";
+
+  const checkHtml = renderQuickCheck(state);
+  const outputHtml = renderPlatformOutput(state);
+  const copyButton = outputHtml.match(/<button[^>]+data-action="copy-pack-block"[^>]*>/)?.[0];
+
+  assert.match(checkHtml, /可能已过期/);
+  assert.match(checkHtml, /旧检查错误/);
+  assert.match(outputHtml, /可能已过期/);
+  assert.match(copyButton, /data-copy-valid="true"/);
+  assert.doesNotMatch(copyButton, / disabled/);
 });
 
 test("已知超限字段明确无效且复制按钮禁用，不截断文本", () => {

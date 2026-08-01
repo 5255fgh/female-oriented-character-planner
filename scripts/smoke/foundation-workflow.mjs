@@ -31,9 +31,9 @@ export async function runFoundationWorkflowSmoke() {
   assert.notStrictEqual(invalidated, project, "失效工具必须返回独立副本");
   assert.deepEqual(project.storyDraft, { stale: true }, "失效工具不得修改输入项目");
   assert.equal(invalidated.storyDraft, null);
-  assert.equal(invalidated.ruleReport, null);
-  assert.equal(invalidated.simulationReport, null);
-  assert.deepEqual(invalidated.platformPacks, []);
+  assert.deepEqual(invalidated.ruleReport, { stale: true });
+  assert.deepEqual(invalidated.simulationReport, { stale: true });
+  assert.deepEqual(invalidated.platformPacks, [{ stale: true }]);
   assert.deepEqual(invalidated.worldBible, { retained: true });
   assert.deepEqual(invalidated.generationRecords, [{ retained: true }]);
 

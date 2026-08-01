@@ -1,4 +1,4 @@
-import { assertProjectDocument } from "../../contracts.js";
+import { assertProjectDocument, createId } from "../../contracts.js";
 import { runDialogueTest } from "../../evaluation/index.js";
 import { withAbortSignal } from "../../llm/abortable-client.js";
 
@@ -23,10 +23,21 @@ export async function runSimulationForProject(state, llmClient, signal) {
     error.name = "AbortError";
     throw error;
   }
+  const completedAt = new Date().toISOString();
   state.project = {
     ...state.project,
     simulationReport,
-    updatedAt: new Date().toISOString(),
+    generationRecords: [
+      ...state.project.generationRecords,
+      {
+        id: createId("generation"),
+        task: "full-simulation",
+        target: "character",
+        status: "completed",
+        createdAt: completedAt,
+      },
+    ],
+    updatedAt: completedAt,
   };
   assertProjectDocument(state.project);
   markChanged(state);

@@ -27,7 +27,7 @@
 | 6 | StoryDraft 正好 8 节点 | 同上 | 少于 8 拒绝，生成结果正好 8 |
 | 7 | 快速 3 场景 | `tests/evaluation/quick-evaluation.test.js` | 固定 3 场景、证据与建议路径有效 |
 | 8 | 完整 8 场景 | `tests/integration/full-dialogue.test.mjs` | 一次请求、8 个唯一固定场景、合同通过 |
-| 9 | 字段修改只改目标字段 | `tests/editing/revision-core.test.js` | 输入不变、目标字段和时间更新、下游失效 |
+| 9 | 字段修改只改目标字段 | `tests/editing/revision-core.test.js` | 输入不变、目标字段和时间更新、保留旧检查与平台包 |
 | 10 | Diff 和 Undo | `tests/editing/revision-core.test.js` | 文本/数组/替换 Diff 稳定，撤销恢复旧值 |
 | 11 | ProjectDocument 任意阶段保存 | `tests/storage/repository.test.mjs` | seed、角色、故事和完整阶段均可往返 |
 | 12 | 自动保存 flush | `tests/storage/autosave.test.mjs` | 防抖、立即 flush、串行写入与卸载尽力提交 |
@@ -59,7 +59,7 @@ Prompt fixture 由 `tests/contracts/prompt-fixtures.mjs` 和对应测试覆盖�
 - `npm run build` — passed；Vite 7.3.6，55 modules transformed。
 - GitHub Actions `CI` run `30693816096` — Node 20 与 Node 22 均 passed。
 
-以上结果是 QA 分支合并前的历史记录。最终集成已关闭两个 `todo`；当前完整测试为 76 项通过、0 失败、0 TODO。
+以上结果是 QA 分支合并前的历史记录。最终集成已关闭两个 `todo`；当前完整测试为 79 项通过、0 失败、0 TODO。
 
 ## Integration Notes
 

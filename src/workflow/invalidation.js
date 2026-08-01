@@ -30,7 +30,8 @@ const INVALIDATED_FIELDS = Object.freeze({
     "simulationReport",
     "platformPacks",
   ],
-  character: ["storyDraft", "ruleReport", "simulationReport", "platformPacks"],
+  // 角色修改后保留旧检查与平台包供用户对照；界面依据生成时间标记为可能已过期。
+  character: ["storyDraft"],
   world: ["storyDraft", "platformPacks"],
   story: ["platformPacks"],
 });

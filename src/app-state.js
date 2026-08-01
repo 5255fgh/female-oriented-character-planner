@@ -3,7 +3,7 @@ import { createId } from "./contracts.js";
 export const GENERATION_STAGE_DEFINITIONS = Object.freeze([
   { id: "analyze", label: "分析灵感" },
   { id: "generate", label: "生成角色或故事" },
-  { id: "check", label: "快速检查" },
+  { id: "check", label: "快速检查（可选）" },
   { id: "platform", label: "生成平台文本" },
 ]);
 

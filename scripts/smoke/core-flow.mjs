@@ -141,9 +141,9 @@ export async function runCoreFlowSmoke() {
     contracts.assertProjectDocument(invalidated);
     assert.deepEqual(invalidated.worldBible, imported.worldBible);
     assert.equal(invalidated.storyDraft, null);
-    assert.equal(invalidated.ruleReport, null);
-    assert.equal(invalidated.simulationReport, null);
-    assert.deepEqual(invalidated.platformPacks, []);
+    assert.deepEqual(invalidated.ruleReport, imported.ruleReport);
+    assert.deepEqual(invalidated.simulationReport, imported.simulationReport);
+    assert.deepEqual(invalidated.platformPacks, imported.platformPacks);
   } finally {
     await vite.close();
     if (hadIndexedDB) {

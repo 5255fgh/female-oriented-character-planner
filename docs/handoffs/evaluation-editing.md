@@ -78,9 +78,10 @@ import {
 确认修改与撤销都按 `character` 变更处理：
 
 - 更新 `character.meta.updatedAt` 和 `project.updatedAt`。
-- 清空 `storyDraft`、`ruleReport`、`simulationReport` 和 `platformPacks`。
+- 清空依赖该角色的 `storyDraft`。
+- 保留 `ruleReport`、`simulationReport` 和 `platformPacks` 供对照，UI 标记为“可能已过期”。
 - 保留 `worldBible`、简报、候选、生成记录和其他非下游项目数据。
-- 撤销只恢复字段旧值；不会恢复已经失效且可能过时的评估、故事或平台产物。
+- 撤销只恢复字段旧值；旧检查和平台包继续保留。
 
 ## UI / Workflow 所需状态
 
@@ -108,7 +109,7 @@ UI 接线时建议维护以下瞬时状态，不写入共享 `ProjectDocument`�
 - `warning` 非阻断，以及确定性结构错误为阻断报告。
 - 提案不修改源项目、不发送完整无关上下文、返回值类型校验与单次重试。
 - 只修改目标字段、稳定文本/数组 Diff、撤销恢复、20 条历史上限。
-- 角色变更后的评估、故事和平台产物失效。
+- 角色变更后故事失效，旧评估和平台包保留供对照。
 - 规则修复只处理显式选择项且不循环。
 - 原有 8 场景流程由现有 smoke 继续验证。
 

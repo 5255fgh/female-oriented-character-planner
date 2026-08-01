@@ -69,11 +69,11 @@ completeText({ task, messages, temperature, maxTokens, signal? })
 | --- | --- |
 | seed | 简报之后的全部生成物 |
 | brief | 候选、角色、世界、故事、评估与平台包 |
-| character | 故事、评估与平台包；保留世界设定 |
+| character | 故事；保留世界设定、旧评估与平台包 |
 | world | 故事与平台包 |
 | story | 平台包 |
 
-确认字段修改和撤销都按 `character` 变化处理。撤销只恢复字段旧值，不恢复已经失效且可能过期的下游产物。
+确认字段修改和撤销都按 `character` 变化处理。旧评估与平台包不删除，界面依据生成时间显示“可能已过期”，并允许用户按需重新生成。
 
 ## 并发与取消
 

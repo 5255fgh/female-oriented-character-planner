@@ -126,7 +126,7 @@ test("字段提案拒绝模型改写请求路径", async () => {
   assert.equal(revision.fieldPath, "persona.currentGoal");
 });
 
-test("确认只改变目标字段和时间，并失效角色下游产物", () => {
+test("确认只改变目标字段和时间，并保留旧检查与平台包供对照", () => {
   const project = createProject();
   const snapshot = structuredClone(project);
   const beforeValue = project.character.persona.currentGoal;
@@ -144,10 +144,10 @@ test("确认只改变目标字段和时间，并失效角色下游产物", () =>
     result.project.character.meta.updatedAt,
     project.character.meta.updatedAt,
   );
-  assert.equal(result.project.ruleReport, null);
-  assert.equal(result.project.simulationReport, null);
+  assert.deepEqual(result.project.ruleReport, project.ruleReport);
+  assert.deepEqual(result.project.simulationReport, project.simulationReport);
   assert.equal(result.project.storyDraft, null);
-  assert.deepEqual(result.project.platformPacks, []);
+  assert.deepEqual(result.project.platformPacks, project.platformPacks);
   assert.deepEqual(result.project.worldBible, project.worldBible);
 
   const normalizedCharacter = structuredClone(result.project.character);
@@ -185,7 +185,7 @@ test("Diff 对文本、数组和完全替换产生稳定输出", () => {
   assert.equal(replacement.replacement, true);
 });
 
-test("撤销恢复修改前值且不恢复已失效产物", () => {
+test("撤销恢复修改前值并继续保留旧检查与平台包", () => {
   const project = createProject();
   const beforeValue = project.character.persona.currentGoal;
   const applied = editing.applyConfirmedRevision(project, {
@@ -201,9 +201,12 @@ test("撤销恢复修改前值且不恢复已失效产物", () => {
   assert.deepEqual(applied.project, appliedSnapshot);
   assert.equal(undone.project.character.persona.currentGoal, beforeValue);
   assert.deepEqual(undone.history, []);
-  assert.equal(undone.project.ruleReport, null);
-  assert.equal(undone.project.simulationReport, null);
-  assert.deepEqual(undone.project.platformPacks, []);
+  assert.deepEqual(undone.project.ruleReport, applied.project.ruleReport);
+  assert.deepEqual(
+    undone.project.simulationReport,
+    applied.project.simulationReport,
+  );
+  assert.deepEqual(undone.project.platformPacks, applied.project.platformPacks);
 });
 
 test("历史仅保留最近 20 次字段修改", () => {

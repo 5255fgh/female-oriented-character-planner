@@ -35,7 +35,7 @@
 
 - 分支基于 `origin/integration/intelligent-v2` 的 `b1ea478d67d9a4a7313129e5565fd60dc0c80518`。
 - 规则来源：`free_character.characterPrompt = 1000`、`dead_rival.rivalSetting = 300`、四项图像风格枚举及 `storyPrompt = 10000` 均来自 `PROJECT_SPEC.md` 第 4 节；仓库未记录复核日期，因此 `verifiedAt` 如实保持 `null`。
-- 未确认规则：`editor_character` 的 8 个字段、`dead_rival.history`、`dead_rival.other`、`image_shape.imagePrompt`，以及 `editor_open_story` 除 `storyPrompt` 外的 6 个字段，其 `maxLength` 均保持 `null`。
+- 待真实页面确认的字段统一记录在 `docs/MAOXIANG_RULES.md`；对应 `maxLength` 均保持 `null`。
 - UI 生成项目输入包时调用 `createMaoxiangPack(project, flowId, llmClient, options)`；手工编辑后只调用 `validatePlatformPack` 重新计算状态，不应在 UI 重复实现必填或枚举判断。
 - `createWorldStoryPlatformMockLLMClient` 委托共享 mock 处理旧任务，只增加 `world-generation`、`story-generation` 和 `maoxiang-compress-fields`。
 - 旧 `open_story` 配置作为禁用兼容项保留；新的开放故事适配 flowId 是 `editor_open_story`。

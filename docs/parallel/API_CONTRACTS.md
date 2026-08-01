@@ -88,7 +88,7 @@ applyConfirmedRevision(project, revision)
   }
 ```
 
-`revision` 形状固定为 `{ fieldPath, before, after, summary }`。只允许修改已有单字段；输入项目不得原地变化。角色字段变化必须统一失效评估、故事和平台包。调用方维护最多 20 条 `historyEntry`。
+`revision` 形状固定为 `{ fieldPath, before, after, summary }`。只允许修改已有单字段；输入项目不得原地变化。角色字段变化清除依赖该角色的故事，但保留旧评估和平台包供对照。调用方维护最多 20 条 `historyEntry`。
 
 ## Workflow Foundation
 

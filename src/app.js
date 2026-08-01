@@ -171,12 +171,8 @@ async function persistCheckpoint(createVersion) {
   }
 }
 
-async function runPostGenerationStages(signal) {
-  activateStage("check");
-  await runQuickChecksForProject(appState, getLLMClient(), signal);
-  throwIfAborted(signal);
-  completeStage("check");
-
+async function runDefaultPlatformStage(signal) {
+  setProgressStage(appState, "check", "skipped");
   activateStage("platform");
   await generatePlatformPackForProject(appState, getLLMClient(), signal);
   throwIfAborted(signal);
@@ -185,12 +181,12 @@ async function runPostGenerationStages(signal) {
   appendGenerationRecord(appState, "completed");
   appState.progressStatus = "complete";
   appState.currentStep = "result";
-  appState.notice = "生成、快速检查与平台文本已完成。";
+  appState.notice = "角色或故事与默认平台文本已生成；质量检查可按需运行。";
   render();
   await persistCheckpoint(true);
 }
 
-async function runPrimaryAndPostprocess(signal) {
+async function runPrimaryAndDefaultOutput(signal) {
   activateStage("generate");
   const outcome = await generatePrimaryContent(appState, getLLMClient(), signal);
   throwIfAborted(signal);
@@ -202,7 +198,7 @@ async function runPrimaryAndPostprocess(signal) {
     scheduleAutosave();
     return;
   }
-  await runPostGenerationStages(signal);
+  await runDefaultPlatformStage(signal);
 }
 
 async function beginGeneration(task) {
@@ -268,7 +264,7 @@ function startFromQuickInput(form, submitter) {
       scheduleAutosave();
       return;
     }
-    await runPrimaryAndPostprocess(signal);
+    await runPrimaryAndDefaultOutput(signal);
   });
 }
 
@@ -287,7 +283,7 @@ function continueFromQuestions(form, submitter) {
   appState.currentStep = "progress";
   appState.progressStatus = "running";
   activateStage("generate");
-  void beginGeneration((signal) => runPrimaryAndPostprocess(signal));
+  void beginGeneration((signal) => runPrimaryAndDefaultOutput(signal));
 }
 
 function updatePackIndicators(pack, block) {
@@ -496,14 +492,29 @@ app.addEventListener("click", (event) => {
     void beginGeneration(async (signal) => {
       await selectConceptForProject(appState, concept, getLLMClient(), signal);
       completeStage("generate");
-      await runPostGenerationStages(signal);
+      await runDefaultPlatformStage(signal);
     });
     return;
   }
-  if (action === "run-postprocess") {
-    resetProgress(appState, ["analyze", "generate"]);
-    activateStage("check");
-    void beginGeneration((signal) => runPostGenerationStages(signal));
+  if (action === "run-quick-check") {
+    void runTask("quick-check", async ({ signal }) => {
+      await runQuickChecksForProject(appState, getLLMClient(), signal);
+      scheduleAutosave();
+    });
+    return;
+  }
+  if (action === "generate-platform-pack") {
+    const flowId = button.dataset.packFlow;
+    void runTask("generate-platform-pack", async ({ signal }) => {
+      await generatePlatformPackForProject(
+        appState,
+        getLLMClient(),
+        signal,
+        flowId,
+      );
+      appState.notice = `“${flowId}”输入包已生成。`;
+      scheduleAutosave();
+    });
     return;
   }
   if (action === "go-field") {
@@ -536,7 +547,7 @@ app.addEventListener("click", (event) => {
     return;
   }
   if (action === "copy-pack") {
-    const pack = getActivePack(appState);
+    const pack = getActivePack(appState, button.dataset.packFlow);
     if (!canCopyPlatformPack(appState, pack)) {
       showError(new Error("输入包含有无效字段，修正后才能复制整包。"));
       return;
