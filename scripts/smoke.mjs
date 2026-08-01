@@ -3,6 +3,7 @@ import { createServer } from "vite";
 import { runFoundationArchitectureSmoke } from "./smoke/foundation-architecture.mjs";
 import { runFoundationContractSmoke } from "./smoke/foundation-contracts.mjs";
 import { runFoundationWorkflowSmoke } from "./smoke/foundation-workflow.mjs";
+import { runCoreFlowSmoke } from "./smoke/core-flow.mjs";
 
 const IMAGE_STYLES = ["通用", "像素画", "言情漫画", "细腻厚涂"];
 
@@ -934,6 +935,7 @@ async function runSmoke() {
   await runFoundationWorkflowSmoke();
   await runContractAndMockSmoke();
   await runBusinessFlowSmoke();
+  await runCoreFlowSmoke();
   await runLLMClientSmoke();
 }
 

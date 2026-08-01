@@ -1,7 +1,6 @@
 import {
   applyFieldPatch,
   assertCharacterDraft,
-  countUnicodeCharacters,
   getValueAtPath,
 } from "../../contracts.js";
 import { expandCharacter } from "../../generation/character-generator.js";
@@ -9,9 +8,9 @@ import { generateConcepts } from "../../generation/concept-generator.js";
 import { regenerateField } from "../../generation/field-regenerator.js";
 import { createLLMClient } from "../../llm/openai-compatible-client.js";
 import { createMockLLMClient } from "../../mock/mock-llm-client.js";
-import { MAOXIANG_FLOWS } from "../../platforms/maoxiang/config.js";
 import { generateMaoxiangPack } from "../../platforms/maoxiang/pack-generator.js";
 import { validatePlatformPack } from "../../platforms/maoxiang/pack-validator.js";
+import { invalidateProject } from "../../workflow/invalidation.js";
 import { readCreativeBrief } from "../forms.js";
 
 const MOCK_SCENARIO_ID_MAP = {
@@ -108,16 +107,11 @@ export function getLLMClientForState(state, model) {
 }
 
 export function invalidateCharacterOutputs(state) {
-  state.project.ruleReport = null;
-  state.project.simulationReport = null;
-  state.project.platformPacks = [];
+  state.project = invalidateProject(state.project, "character");
 }
 
 export function invalidateBriefOutputs(state) {
-  state.project.concepts = [];
-  state.project.selectedConceptId = "";
-  state.project.character = null;
-  invalidateCharacterOutputs(state);
+  state.project = invalidateProject(state.project, "brief");
   state.selectedConceptId = "";
   state.activeFieldPath = "";
   state.fieldInstructions = {};
@@ -174,23 +168,12 @@ export function removeCharacterRepeater(state, kind, index) {
 function prepareEditedPack(pack, blockId, text) {
   const blocks = pack.blocks.map((block) => {
     if (block.id !== blockId) return block;
-    const currentLength = countUnicodeCharacters(text);
     return {
       ...block,
       text,
-      currentLength,
-      valid: block.maxLength === null || currentLength <= block.maxLength,
     };
   });
-  const validated = validatePlatformPack({ ...pack, blocks });
-  const flow = MAOXIANG_FLOWS[validated.flowId];
-  return {
-    ...validated,
-    blocks: validated.blocks.map((block) => ({
-      ...block,
-      valid: block.valid && (!flow[block.id]?.required || countUnicodeCharacters(block.text) > 0),
-    })),
-  };
+  return validatePlatformPack({ ...pack, blocks });
 }
 
 export function editPlatformPack(state, flowId, blockId, text) {

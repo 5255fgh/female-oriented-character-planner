@@ -42,10 +42,9 @@
 
 ## Requested Shared Change
 
-- Foundation / Integration：将共享 `PLATFORM_FLOW_IDS` 增加 `editor_character` 与 `editor_open_story`，使 `assertPlatformPack` 和 `assertProjectDocument` 能校验、保存这两类输入包；是否删除旧 `open_story` 由集成任务统一决定。
-- UI Workflow：删除 `src/ui/actions/generation-actions.js` 中重复的必填判断，统一依赖 `validatePlatformPack`。
+- 已由 Wave 1 Integration 完成：共享 `PLATFORM_FLOW_IDS` 已增加 `editor_character` 与 `editor_open_story`，`assertPlatformPack`、`assertProjectDocument` 与 Storage 均可校验和保存这两类输入包；旧 `open_story` 仅为旧项目兼容保留。
+- 已由 Wave 1 Integration 完成：`src/ui/actions/generation-actions.js` 已删除重复必填判断，手工编辑统一依赖 `validatePlatformPack`。
 
 ## Real Open Issues
 
-- 共享契约完成上述 flowId 扩展前，两个 editor 输入包可以由本模块生成和校验，但加入 `ProjectDocument.platformPacks` 后会被当前 `assertProjectDocument` 拒绝。
 - 已确认规则的原始截图/复核日期不在当前仓库中，不能安全填写非空 `verifiedAt`。

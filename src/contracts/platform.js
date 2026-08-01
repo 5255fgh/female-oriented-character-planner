@@ -28,7 +28,14 @@ import {
  * @property {string} generatedAt
  */
 
-const PLATFORM_FLOW_IDS = ["free_character", "dead_rival", "image_shape", "open_story"];
+const PLATFORM_FLOW_IDS = [
+  "editor_character",
+  "free_character",
+  "dead_rival",
+  "image_shape",
+  "editor_open_story",
+  "open_story",
+];
 
 /** @param {unknown} value @param {string} path */
 export function validatePlatformPack(value, path) {

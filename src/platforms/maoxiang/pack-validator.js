@@ -7,12 +7,6 @@ import {
   MAOXIANG_FIELD_LABELS,
 } from "./rules.js";
 
-const SHARED_CONTRACT_FLOW_IDS = new Set([
-  "free_character",
-  "dead_rival",
-  "image_shape",
-  "open_story",
-]);
 const BLOCK_KEYS = new Set([
   "id",
   "label",
@@ -174,9 +168,5 @@ export function validatePlatformPack(pack) {
     generatedAt: shell.generatedAt,
   };
 
-  // 旧入口继续由共享契约复核；两个 editor flowId 等待集成任务扩展共享枚举。
-  if (SHARED_CONTRACT_FLOW_IDS.has(shell.flowId)) {
-    assertPlatformPack(validatedPack);
-  }
-  return /** @type {import("../../contracts.js").PlatformPack} */ (validatedPack);
+  return assertPlatformPack(validatedPack);
 }

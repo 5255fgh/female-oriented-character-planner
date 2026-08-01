@@ -9,6 +9,19 @@
 - 模型不得生成项目或角色的 `id`、`createdAt`、`updatedAt`。
 - 函数只返回数据，不操作 DOM、IndexedDB 或猫箱网页。
 
+## 统一模块入口
+
+第二波 UI 与 QA 统一从以下 barrel 导入，不再自行拼接模块内部路径：
+
+- `src/contracts.js`
+- `src/generation/index.js`
+- `src/evaluation/index.js`
+- `src/editing/index.js`
+- `src/platforms/maoxiang/index.js`
+- `src/storage/index.js`
+- `src/workflow/index.js`
+- `src/mock/index.js`
+
 ## Character Intelligence
 
 ```js
@@ -57,6 +70,8 @@ createMaoxiangPack(project, flowId, llmClient, options)
 ```
 
 `project` 是有效 `ProjectDocument`，并至少包含当前入口需要的 `character` 或 `storyDraft`。该入口是未来统一适配器；现有兼容接口 `generateMaoxiangPack(character, flowId, llmClient)` 保持可用。
+
+共享 `PlatformPack.flowId` 接受 `editor_character`、`free_character`、`dead_rival`、`image_shape`、`editor_open_story` 与仅用于旧项目兼容的 `open_story`。新项目不得生成禁用的 `open_story`。
 
 ## Editing
 
