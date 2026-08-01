@@ -1,67 +1,113 @@
 import { escapeHtml } from "./dom.js";
-import { renderBriefScreen } from "./screens/brief-screen.js";
 import {
-  renderCharacterScreen,
+  renderBriefScreen,
+  renderProgressScreen,
+  renderQuestionScreen,
+} from "./screens/brief-screen.js";
+import {
+  renderCharacterEditor,
+  renderCharacterSummary,
   renderConceptScreen,
+  renderStorySummary,
 } from "./screens/character-screen.js";
-import { renderEvaluationScreen } from "./screens/evaluation-screen.js";
-import { renderOutputScreen } from "./screens/output-screen.js";
+import { renderQuickCheck } from "./screens/evaluation-screen.js";
+import { renderPlatformOutput } from "./screens/output-screen.js";
 import {
   renderProjectScreen,
+  renderSavePanel,
   renderStorageScreen,
 } from "./screens/project-screen.js";
 import {
-  canVisitStep,
-  disabled,
+  renderAutosavePill,
+  renderFeedback,
   SCENARIO_LABELS,
-  STEPS,
 } from "./rendering.js";
 
 function renderHeader(state, model) {
   return `
     <header class="app-header">
-      <div><p class="eyebrow">女性向角色策划工具</p><h1>角色策划与猫箱输入包生成器</h1></div>
+      <button type="button" class="brand-button" data-action="go-home" aria-label="返回首页">
+        <span class="brand-mark" aria-hidden="true">策</span>
+        <span><small>女性向创作工作台</small><strong>角色策划与猫箱输入包生成器</strong></span>
+      </button>
       <div class="header-meta" aria-label="当前运行信息">
-        <span class="status-pill status-neutral">${state.mode === "mock" ? "Mock 演示" : "真实 API"}</span>
-        <span class="model-name">模型：${escapeHtml(model)}</span>
+        <label class="mode-control" for="app-mode">
+          <span>运行方式</span>
+          <select id="app-mode" data-app-mode>
+            <option value="mock"${state.mode !== "real" ? " selected" : ""}>Mock 演示</option>
+            <option value="real"${state.mode === "real" ? " selected" : ""}>真实 API</option>
+          </select>
+        </label>
+        <span class="model-name">${escapeHtml(model)}</span>
       </div>
     </header>`;
 }
 
-function renderStepper(state) {
-  return `
-    <nav class="step-nav" aria-label="主流程步骤">
-      <ol>
-        ${STEPS.map((label, index) => `
-          <li>
-            <button type="button" class="step-button${state.currentStep === index ? " is-current" : ""}" data-action="go-step" data-step="${index}" ${state.currentStep === index ? 'aria-current="step"' : ""}${disabled(state, !canVisitStep(state, index))}>
-              <span>${index}</span>${escapeHtml(label)}
-            </button>
-          </li>`).join("")}
-      </ol>
-    </nav>`;
+function normalizeView(state) {
+  if (typeof state.currentStep === "string") return state.currentStep;
+  if (state.currentStep === 0) return "home";
+  if (state.currentStep === 1) return "create";
+  if (state.currentStep === 2) return "concepts";
+  return "result";
 }
 
-function renderCurrentStep(state, model) {
-  switch (state.currentStep) {
-    case 0: return renderProjectScreen(state, model);
-    case 1: return renderBriefScreen(state);
-    case 2: return renderConceptScreen(state);
-    case 3: return renderCharacterScreen(state);
-    case 4: return renderEvaluationScreen(state);
-    case 5: return renderOutputScreen(state);
-    case 6: return renderStorageScreen(state);
-    default: return renderProjectScreen(state, model);
-  }
+function renderResultScreen(state) {
+  const kindLabel = state.projectKind === "story" ? "开放故事" : "角色";
+  return `
+    <section class="step-panel result-screen" aria-labelledby="result-title">
+      <header class="result-header">
+        <div>
+          <p class="section-kicker">${escapeHtml(kindLabel)}已生成</p>
+          <h2 id="result-title">${escapeHtml(state.project.title || "未命名项目")}</h2>
+          <p>先看摘要与检查，再复制平台文本；高级编辑默认折叠。</p>
+        </div>
+        <div class="result-status">${renderAutosavePill(state)}<button type="button" class="button-secondary button-small" data-action="go-home">返回首页</button></div>
+      </header>
+      <nav class="result-nav" aria-label="结果页分区">
+        <a href="#result-summary">摘要</a>
+        <a href="#quick-check">快速检查</a>
+        <a href="#platform-output">平台文本</a>
+        ${state.project.character ? '<a href="#advanced-editor">高级编辑</a>' : ""}
+        <a href="#save-export">保存与导出</a>
+      </nav>
+      ${renderFeedback(state)}
+      ${state.project.storyDraft && !state.project.character
+        ? renderStorySummary(state)
+        : renderCharacterSummary(state)}
+      ${renderQuickCheck(state)}
+      ${renderPlatformOutput(state)}
+      ${renderCharacterEditor(state)}
+      ${renderSavePanel(state)}
+    </section>`;
+}
+
+function renderCurrentView(state) {
+  const view = normalizeView(state);
+  if (view === "create") return renderBriefScreen(state);
+  if (view === "questions") return renderQuestionScreen(state);
+  if (view === "progress") return renderProgressScreen(state);
+  if (view === "concepts") return renderConceptScreen(state);
+  if (view === "result") return renderResultScreen(state);
+  if (view === "storage") return renderStorageScreen(state);
+  return renderProjectScreen(state);
 }
 
 export function renderApp(state, { model }) {
+  const normalizedState = {
+    ...state,
+    projectKind: state.projectKind || (state.project?.storyDraft ? "story" : "character"),
+    quickInput: state.quickInput || { idea: "", mustInclude: "", avoid: "" },
+    answers: state.answers || {},
+    progress: state.progress || [],
+    autosaveStatus: state.autosaveStatus || (state.dirty ? "pending" : "idle"),
+    revisionHistory: state.revisionHistory || [],
+    fieldInstructions: state.fieldInstructions || {},
+  };
   return `
     <div class="app-shell"${state.loading ? ' aria-busy="true"' : ""}>
-      ${renderHeader(state, model)}
-      ${renderStepper(state)}
-      <main class="main-content">${renderCurrentStep(state, model)}</main>
-      <footer>内容仅保存在当前浏览器；真实模式的密钥由本地代理处理。</footer>
+      ${renderHeader(normalizedState, model)}
+      <main class="main-content">${renderCurrentView(normalizedState)}</main>
+      <footer>项目保存在当前浏览器；真实模式的密钥只由本地代理处理。</footer>
     </div>`;
 }
 

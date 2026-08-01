@@ -1,5 +1,5 @@
-import { runDialogueTest } from "../../evaluation/dialogue-tester.js";
-import { checkRules } from "../../evaluation/rule-checker.js";
+import { assertProjectDocument } from "../../contracts.js";
+import { checkRules, runDialogueTest } from "../../evaluation/index.js";
 
 function markChanged(state) {
   state.dirty = true;
@@ -7,16 +7,33 @@ function markChanged(state) {
 }
 
 export function runRulesForProject(state) {
-  state.project.ruleReport = checkRules(state.project.character);
+  if (!state.project.character) {
+    throw new Error("当前项目没有可检查的角色。");
+  }
+  state.project = {
+    ...state.project,
+    ruleReport: checkRules(state.project.character),
+    updatedAt: new Date().toISOString(),
+  };
+  assertProjectDocument(state.project);
   markChanged(state);
-  state.notice = "规则检查已完成。";
+  state.notice = "规则检查已更新。";
 }
 
 export async function runSimulationForProject(state, llmClient) {
-  state.project.simulationReport = await runDialogueTest(
+  if (!state.project.character) {
+    throw new Error("当前项目没有可测试的角色。");
+  }
+  const simulationReport = await runDialogueTest(
     state.project.character,
     llmClient,
   );
+  state.project = {
+    ...state.project,
+    simulationReport,
+    updatedAt: new Date().toISOString(),
+  };
+  assertProjectDocument(state.project);
   markChanged(state);
-  state.notice = "8 场景模拟已完成。";
+  state.notice = "完整 8 场景测试已完成。";
 }

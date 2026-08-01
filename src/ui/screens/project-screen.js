@@ -2,112 +2,102 @@ import { escapeHtml, formatDateTime } from "../dom.js";
 import {
   disabled,
   isPending,
+  renderAutosavePill,
   renderFeedback,
   renderSavedProjects,
 } from "../rendering.js";
 
-export function renderProjectScreen(state, model) {
+function renderRecoveryPrompt(state) {
+  const recovery = state.savedProjects?.find(
+    (project) => project.id === state.recoveryProjectId,
+  );
+  if (!recovery || state.recoveryDismissed) return "";
   return `
-    <section class="step-panel" aria-labelledby="step-title">
-      <div class="step-heading">
-        <p>步骤 0 / 6</p>
-        <h2 id="step-title">项目与运行模式</h2>
-        <span>选择运行方式，再创建或打开一个项目。切换模式不会清空当前工作内容。</span>
+    <aside class="recovery-banner" role="status" aria-label="恢复草稿提示">
+      <div>
+        <strong>发现上次草稿</strong>
+        <p>“${escapeHtml(recovery.title || "未命名项目")}”更新于 ${escapeHtml(formatDateTime(recovery.updatedAt))}。</p>
       </div>
+      <div class="inline-actions">
+        <button type="button" class="button-primary button-small" data-action="recover-project" data-project-id="${escapeHtml(recovery.id)}"${disabled(state)}>恢复草稿</button>
+        <button type="button" class="button-secondary button-small" data-action="dismiss-recovery"${disabled(state)}>暂不恢复</button>
+      </div>
+    </aside>`;
+}
+
+export function renderProjectScreen(state) {
+  return `
+    <section class="step-panel home-screen" aria-labelledby="home-title">
       ${renderFeedback(state)}
-      <div class="two-column-layout">
-        <section class="card">
-          <h3>运行模式</h3>
-          <fieldset class="choice-group">
-            <legend class="visually-hidden">选择运行模式</legend>
-            <label class="choice-card">
-              <input type="radio" name="appMode" value="mock" data-app-mode${state.mode === "mock" ? " checked" : ""}${disabled(state)} />
-              <span><strong>Mock 演示</strong><small>使用本地稳定示例，不发送网络请求。</small></span>
-            </label>
-            <label class="choice-card">
-              <input type="radio" name="appMode" value="real" data-app-mode${state.mode === "real" ? " checked" : ""}${disabled(state)} />
-              <span><strong>真实 API</strong><small>通过本地 Vite 代理调用模型服务。</small></span>
-            </label>
-          </fieldset>
-          <p class="model-card">当前模型 <code>${escapeHtml(model)}</code></p>
-          <p class="helper-text">页面不读取、输入或保存 API Key。</p>
-        </section>
-        <section class="card">
-          <h3>新建项目</h3>
-          <form data-form="new-project">
-            <label class="form-field" for="new-project-title">
-              <span>项目标题</span>
-              <input id="new-project-title" name="title" type="text" maxlength="80" placeholder="例如：雨夜禁书库角色企划" required${disabled(state)} />
-            </label>
-            <button type="submit" class="button-primary full-width"${disabled(state)}>开始创作</button>
-          </form>
-          <p class="helper-text">也可以直接导入此前导出的 JSON 项目。</p>
-          <button type="button" class="button-secondary full-width" data-action="choose-import"${disabled(state)}>导入 JSON</button>
-          <input class="visually-hidden" type="file" accept="application/json,.json" data-import-file />
-        </section>
+      ${renderRecoveryPrompt(state)}
+      <div class="home-hero">
+        <p class="eyebrow">从一句话到可复制的平台文本</p>
+        <h2 id="home-title">今天想创造谁，或打开怎样的故事？</h2>
+        <p>先给出灵感与边界；信息不足时最多追问 3 题，其余交给完整工作流。</p>
       </div>
+      <div class="entry-grid" aria-label="主要入口">
+        <button type="button" class="entry-card entry-primary" data-action="create-character"${disabled(state)}>
+          <span class="entry-icon" aria-hidden="true">人</span>
+          <span><strong>创建角色</strong><small>生成角色、快速检查与角色编辑器文本</small></span>
+        </button>
+        <button type="button" class="entry-card" data-action="create-story"${disabled(state)}>
+          <span class="entry-icon" aria-hidden="true">章</span>
+          <span><strong>创建开放故事</strong><small>生成共享世界、8 个节点与开放故事文本</small></span>
+        </button>
+        <button type="button" class="entry-card" data-action="open-library"${disabled(state)}>
+          <span class="entry-icon" aria-hidden="true">夹</span>
+          <span><strong>打开已有项目</strong><small>继续当前浏览器中自动保存的草稿</small></span>
+        </button>
+        <button type="button" class="entry-card" data-action="choose-import"${disabled(state)}>
+          <span class="entry-icon" aria-hidden="true">入</span>
+          <span><strong>导入 JSON</strong><small>校验并迁移此前导出的项目文件</small></span>
+        </button>
+      </div>
+      <input class="visually-hidden" type="file" accept="application/json,.json" data-import-file />
       ${renderSavedProjects(state)}
     </section>`;
 }
 
 function renderVersions(state) {
+  const versions = Array.isArray(state.versions) ? state.versions : [];
   return `
-    <section class="card">
-      <div class="section-heading">
-        <div><p class="section-kicker">每次保存自动生成</p><h3>历史版本</h3></div>
-        <span class="count-badge">${state.versions.length} 个</span>
-      </div>
-      ${state.versions.length === 0
-        ? '<p class="empty-state">保存项目后会在这里留下版本。</p>'
+    <details class="version-panel">
+      <summary>历史版本 <span class="count-badge">${versions.length}</span></summary>
+      ${versions.length === 0
+        ? '<p class="empty-state">首次完整生成或手动保存后会留下版本。</p>'
         : `<ol class="record-list version-list">
-            ${state.versions.map((version, index) => `
+            ${versions.map((version, index) => `
               <li>
-                <div class="record-summary"><strong>版本 ${state.versions.length - index}</strong><span>${escapeHtml(formatDateTime(version.createdAt))}</span></div>
+                <div class="record-summary"><strong>版本 ${versions.length - index}</strong><span>${escapeHtml(formatDateTime(version.createdAt))}</span></div>
                 <button type="button" class="button-secondary button-small" data-action="restore-version" data-version-id="${escapeHtml(version.id)}"${disabled(state)}>恢复</button>
               </li>`).join("")}
           </ol>`}
+    </details>`;
+}
+
+export function renderSavePanel(state) {
+  return `
+    <section class="card save-panel" id="save-export" aria-labelledby="save-title">
+      <div class="section-heading">
+        <div><p class="section-kicker">本地保存</p><h3 id="save-title">保存与导出</h3></div>
+        ${renderAutosavePill(state)}
+      </div>
+      ${state.autosaveError ? `<p class="autosave-error" role="alert">${escapeHtml(state.autosaveError)}</p>` : ""}
+      <label class="form-field" for="project-title">
+        <span>项目标题</span>
+        <input id="project-title" type="text" value="${escapeHtml(state.project.title || "")}" data-project-title />
+      </label>
+      <div class="save-actions">
+        <button type="button" class="button-primary" data-action="save-project"${disabled(state)}>${isPending(state, "save-project") ? "保存中…" : "立即保存版本"}</button>
+        <button type="button" class="button-secondary" data-action="export-json"${disabled(state)}>导出 JSON</button>
+        <button type="button" class="button-secondary" data-action="export-markdown"${disabled(state)}>导出 Markdown</button>
+      </div>
+      <p class="helper-text">普通修改由存储服务自动防抖保存；“立即保存版本”会额外留下可恢复快照。</p>
+      ${renderVersions(state)}
     </section>`;
 }
 
+// 兼容旧入口；新流程把保存区直接放在结果页底部。
 export function renderStorageScreen(state) {
-  const isStored = state.savedProjects.some((project) => project.id === state.project.id);
-  const exportDisabled = !isStored || state.dirty;
-  return `
-    <section class="step-panel" aria-labelledby="step-title">
-      <div class="step-heading">
-        <p>步骤 6 / 6</p>
-        <h2 id="step-title">保存、历史和导出</h2>
-        <span>保存写入本机 IndexedDB；未保存的编辑不会自动持久化。</span>
-      </div>
-      ${renderFeedback(state)}
-      <div class="two-column-layout save-layout">
-        <section class="card">
-          <div class="section-heading">
-            <h3>当前项目</h3>
-            <span class="status-pill ${state.dirty ? "status-warning" : "status-pass"}" data-save-status>${state.dirty ? "有未保存修改" : "已保存"}</span>
-          </div>
-          <label class="form-field" for="save-project-title">
-            <span>项目标题</span>
-            <input id="save-project-title" type="text" value="${escapeHtml(state.project.title)}" data-project-title />
-          </label>
-          <button type="button" class="button-primary full-width" data-action="save-project"${disabled(state)}>${isPending(state, "save-project") ? "保存中…" : "保存项目"}</button>
-          <p class="helper-text">每次保存都会留下一个可恢复版本。</p>
-        </section>
-        <section class="card">
-          <h3>导入与导出</h3>
-          <div class="stacked-actions">
-            <button type="button" class="button-secondary" data-action="export-json"${disabled(state, exportDisabled)}>导出 JSON</button>
-            <button type="button" class="button-secondary" data-action="export-markdown"${disabled(state, exportDisabled)}>导出 Markdown</button>
-            <button type="button" class="button-secondary" data-action="choose-import"${disabled(state)}>导入 JSON</button>
-            <input class="visually-hidden" type="file" accept="application/json,.json" data-import-file />
-          </div>
-          <p class="helper-text" data-export-helper>${exportDisabled ? "请先保存当前修改，再导出最新版本。" : "导出内容与当前已保存版本一致。"}</p>
-        </section>
-      </div>
-      ${renderVersions(state)}
-      ${renderSavedProjects(state, true)}
-      <div class="step-actions">
-        <button type="button" class="button-secondary" data-action="go-step" data-step="5"${disabled(state)}>返回输入包</button>
-      </div>
-    </section>`;
+  return `<section class="step-panel">${renderFeedback(state)}${renderSavePanel(state)}${renderSavedProjects(state, true)}</section>`;
 }
