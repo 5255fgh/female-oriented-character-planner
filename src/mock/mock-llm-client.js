@@ -6,6 +6,10 @@ import {
   assertSimulationReport,
   countUnicodeCharacters,
 } from "../contracts.js";
+import {
+  createDirectCharacterMockResponse,
+  createSeedAnalysisMockResponse,
+} from "./character-intelligence-mock.js";
 
 const FIXED_TIMESTAMP = "2026-01-01T00:00:00.000Z";
 
@@ -329,12 +333,18 @@ function readTask(request) {
 }
 
 /**
- * @param {string} task
+ * @param {unknown} request
  * @returns {object}
  */
-function createJsonResponse(task) {
+function createJsonResponse(request) {
+  const task = readTask(request);
   switch (task) {
+    case "seed-analysis":
+      return createSeedAnalysisMockResponse(request);
+    case "direct-character-generation":
+      return createDirectCharacterMockResponse(CHARACTER_DRAFT);
     case "concept-generation":
+    case "three-direction-generation":
       return assertConceptCandidates(clone(CONCEPT_CANDIDATES));
     case "character-expansion":
       return assertCharacterDraft(clone(CHARACTER_DRAFT));
@@ -359,7 +369,12 @@ function createJsonResponse(task) {
  */
 function createTextResponse(task) {
   switch (task) {
+    case "seed-analysis":
+      return "已判断种子是否需要补充高影响信息。";
+    case "direct-character-generation":
+      return "已生成项目标题、创作简报和一个完整角色。";
     case "concept-generation":
+    case "three-direction-generation":
       return "已生成三个差异化角色概念。";
     case "character-expansion":
       return "已扩展沈砚舟的完整角色设定。";
@@ -399,7 +414,7 @@ function createTextResponse(task) {
 export function createMockLLMClient() {
   return {
     async completeJson(request) {
-      return createJsonResponse(readTask(request));
+      return createJsonResponse(request);
     },
     async completeText(request) {
       return createTextResponse(readTask(request));

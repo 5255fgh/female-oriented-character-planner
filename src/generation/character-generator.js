@@ -3,8 +3,10 @@ import prompt from "../../prompts/character-expansion.md?raw";
 import {
   assertCharacterDraft,
   assertCreativeBrief,
+  assertCreativeSeed,
   createId,
 } from "../contracts.js";
+import { generateBriefCharacterBundle } from "./brief-generator.js";
 
 const CONCEPT_CANDIDATE_KEYS = [
   "id",
@@ -72,50 +74,53 @@ function isMissingText(value) {
  * @param {string} conceptName
  * @returns {unknown}
  */
-function fillCharacterDefaults(response, conceptName) {
+function finalizeCharacterDraft(response, preferredName) {
   if (!isPlainObject(response)) {
-    return response;
+    throw new Error("CharacterDraft: expected an object");
+  }
+  if (!isPlainObject(response.publicInfo)) {
+    throw new Error("CharacterDraft.publicInfo: expected an object");
+  }
+  if (
+    response.meta !== undefined &&
+    response.meta !== null &&
+    !isPlainObject(response.meta)
+  ) {
+    throw new Error("CharacterDraft.meta: expected an object");
   }
 
-  const character = { ...response };
+  const modelMeta = isPlainObject(response.meta) ? response.meta : {};
+  const allowedMetaKeys = new Set(["id", "name", "createdAt", "updatedAt"]);
+  for (const key of Object.keys(modelMeta)) {
+    if (!allowedMetaKeys.has(key)) {
+      throw new Error(`CharacterDraft.meta.${key}: unexpected field`);
+    }
+  }
+
+  const generatedName = isMissingText(response.publicInfo.name)
+    ? modelMeta.name
+    : response.publicInfo.name;
+  const name = isMissingText(preferredName) ? generatedName : preferredName;
+  if (isMissingText(name)) {
+    throw new Error("CharacterDraft.publicInfo.name: expected a non-empty string");
+  }
+
   const now = new Date().toISOString();
+  const character = {
+    ...response,
+    meta: {
+      id: createId("character"),
+      name,
+      createdAt: now,
+      updatedAt: now,
+    },
+    publicInfo: {
+      ...response.publicInfo,
+      name,
+    },
+  };
 
-  if (
-    response.meta === undefined ||
-    response.meta === null ||
-    isPlainObject(response.meta)
-  ) {
-    const meta = isPlainObject(response.meta) ? { ...response.meta } : {};
-    if (isMissingText(meta.id)) {
-      meta.id = createId("character");
-    }
-    if (isMissingText(meta.createdAt)) {
-      meta.createdAt = now;
-    }
-    if (isMissingText(meta.updatedAt)) {
-      meta.updatedAt = now;
-    }
-    if (isMissingText(meta.name)) {
-      meta.name = conceptName;
-    }
-    character.meta = meta;
-  }
-
-  if (
-    response.publicInfo === undefined ||
-    response.publicInfo === null ||
-    isPlainObject(response.publicInfo)
-  ) {
-    const publicInfo = isPlainObject(response.publicInfo)
-      ? { ...response.publicInfo }
-      : {};
-    if (isMissingText(publicInfo.name)) {
-      publicInfo.name = conceptName;
-    }
-    character.publicInfo = publicInfo;
-  }
-
-  return character;
+  return assertCharacterDraft(character);
 }
 
 /**
@@ -149,6 +154,41 @@ export async function expandCharacter(concept, brief, llmClient) {
     messages,
     maxTokens: 8192,
   });
-  const character = fillCharacterDefaults(response, validatedConcept.name);
-  return assertCharacterDraft(character);
+  return finalizeCharacterDraft(response, validatedConcept.name);
+}
+
+/**
+ * 默认入口：一次结构化调用直接生成一份简报和一个完整角色。
+ *
+ * @param {import("../contracts.js").CreativeSeed} seed
+ * @param {Record<string, string>} answers
+ * @param {{completeJson(request: object): Promise<object>}} llmClient
+ * @param {{signal?: AbortSignal}} [options]
+ * @returns {Promise<{
+ *   title: string,
+ *   brief: import("../contracts.js").CreativeBrief,
+ *   worldSummary: string | null,
+ *   character: import("../contracts.js").CharacterDraft
+ * }>}
+ */
+export async function generateCharacterFromSeed(
+  seed,
+  answers,
+  llmClient,
+  options = {},
+) {
+  assertCreativeSeed(seed);
+  const generated = await generateBriefCharacterBundle(
+    seed,
+    answers,
+    llmClient,
+    options,
+  );
+
+  return {
+    title: generated.title,
+    brief: generated.brief,
+    worldSummary: generated.worldSummary,
+    character: finalizeCharacterDraft(generated.character),
+  };
 }
