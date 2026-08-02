@@ -8,6 +8,7 @@ import {
 } from "../contracts.js";
 import { generateBriefCharacterBundle } from "./brief-generator.js";
 
+const CHARACTER_EXPANSION_PROMPT_VERSION = "character-expansion/v1";
 const CONCEPT_CANDIDATE_KEYS = [
   "id",
   "name",
@@ -141,6 +142,7 @@ export async function expandCharacter(concept, brief, llmClient) {
     {
       role: "user",
       content: [
+        `提示词版本：${CHARACTER_EXPANSION_PROMPT_VERSION}`,
         "请把选中的概念扩展为完整 CharacterDraft。",
         `选中概念 JSON：\n${JSON.stringify(validatedConcept, null, 2)}`,
         `创作简报 JSON：\n${JSON.stringify(brief, null, 2)}`,

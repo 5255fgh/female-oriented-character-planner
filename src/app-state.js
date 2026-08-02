@@ -1,5 +1,12 @@
 import { createId } from "./contracts.js";
 
+export const GENERATION_STAGE_DEFINITIONS = Object.freeze([
+  { id: "analyze", label: "分析灵感" },
+  { id: "generate", label: "生成角色或故事" },
+  { id: "check", label: "快速检查（可选）" },
+  { id: "platform", label: "生成平台文本" },
+]);
+
 export function createEmptyBrief() {
   return {
     platform: "maoxiang",
@@ -26,36 +33,77 @@ export function createWorkingProject(title = "") {
   return {
     id: createId("project"),
     title,
-    brief: createEmptyBrief(),
+    seed: null,
+    brief: null,
     concepts: [],
-    selectedConceptId: "",
+    selectedConceptId: null,
     character: null,
+    worldBible: null,
+    storyDraft: null,
     ruleReport: null,
     simulationReport: null,
     platformPacks: [],
+    generationRecords: [],
     createdAt: timestamp,
     updatedAt: timestamp,
   };
 }
 
+export function createGenerationProgress() {
+  return GENERATION_STAGE_DEFINITIONS.map((stage) => ({
+    ...stage,
+    status: "pending",
+  }));
+}
+
+function inferProjectKind(project) {
+  if (
+    project?.storyDraft ||
+    project?.platformPacks?.some((pack) => pack.flowId === "editor_open_story") ||
+    project?.generationRecords?.some((record) => record.target === "story")
+  ) {
+    return "story";
+  }
+  return "character";
+}
+
 /**
- * 创建单一普通对象形式的应用状态。
- *
- * @returns {object}
+ * 创建仅由普通对象组成的 UI 状态；瞬时状态不会写入 ProjectDocument。
  */
 export function createInitialAppState() {
   return {
     mode: "mock",
-    currentStep: 0,
+    currentStep: "home",
+    projectKind: "character",
+    generationMode: "direct",
     project: createWorkingProject(),
-    selectedConceptId: "",
-    loading: false,
-    error: "",
+    quickInput: {
+      idea: "",
+      mustInclude: "",
+      avoid: "",
+    },
+    advancedBrief: createEmptyBrief(),
+    questions: [],
+    answers: {},
+    progress: createGenerationProgress(),
+    progressStatus: "idle",
+    selectedConceptId: null,
+    quickDialogueReport: null,
+    storyCheck: null,
+    pendingRevision: null,
+    revisionDiff: null,
+    revisionHistory: [],
+    fieldInstructions: {},
     activeFieldPath: "",
     savedProjects: [],
     versions: [],
-    fieldInstructions: {},
+    recoveryProjectId: "",
+    recoveryDismissed: false,
+    autosaveStatus: "idle",
+    autosaveError: "",
+    loading: false,
     pendingAction: "",
+    error: "",
     notice: "",
     dirty: false,
   };
@@ -63,29 +111,6 @@ export function createInitialAppState() {
 
 export const appState = createInitialAppState();
 
-export function resetCurrentProject(title = "") {
-  appState.project = createWorkingProject(title);
-  appState.selectedConceptId = "";
-  appState.currentStep = 1;
-  appState.error = "";
-  appState.notice = "";
-  appState.activeFieldPath = "";
-  appState.versions = [];
-  appState.fieldInstructions = {};
-  appState.dirty = true;
-}
-
-export function replaceCurrentProject(project) {
-  appState.project = structuredClone(project);
-  appState.selectedConceptId = project.selectedConceptId;
-  appState.error = "";
-  appState.notice = "";
-  appState.activeFieldPath = "";
-  appState.fieldInstructions = {};
-  appState.dirty = false;
-}
-
-export function markProjectChanged() {
-  appState.dirty = true;
-  appState.notice = "";
+export function inferKindFromProject(project) {
+  return inferProjectKind(project);
 }

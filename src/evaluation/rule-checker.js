@@ -88,6 +88,87 @@ function addIssue(
 }
 
 /**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isObjectLike(value) {
+  return value !== null && typeof value === "object";
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} contractPath
+ * @returns {boolean}
+ */
+function hasContractPath(value, contractPath) {
+  const relativePath = contractPath
+    .replace(/^CharacterDraft(?:\.|$)/u, "")
+    .replace(/\[(\d+)\]/gu, ".$1");
+  if (relativePath.length === 0) {
+    return value !== undefined;
+  }
+
+  let current = value;
+  for (const segment of relativePath.split(".")) {
+    if (!isObjectLike(current) || !Object.prototype.hasOwnProperty.call(current, segment)) {
+      return false;
+    }
+    current = /** @type {Record<string, unknown>} */ (current)[segment];
+  }
+  return true;
+}
+
+/**
+ * 将共享契约抛出的首个结构错误转换为可展示的阻断报告。
+ *
+ * @param {unknown} character
+ * @param {unknown} error
+ * @returns {import("../contracts.js").RuleCheckReport}
+ */
+function createBlockingStructureReport(character, error) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const separatorIndex = errorMessage.indexOf(":");
+  const contractPath = separatorIndex === -1
+    ? "CharacterDraft"
+    : errorMessage.slice(0, separatorIndex);
+  const reason = separatorIndex === -1
+    ? errorMessage
+    : errorMessage.slice(separatorIndex + 1).trim();
+  const fieldPath = contractPath
+    .replace(/^CharacterDraft\.?/u, "")
+    .replace(/\[(\d+)\]/gu, ".$1") || "character";
+
+  let code = "INVALID_CHARACTER_TYPE";
+  let message = "角色字段类型不符合共享契约，当前结果不可继续使用。";
+  let suggestedAction = "恢复该字段的契约类型后重新运行检查。";
+  if (reason.includes("unexpected field")) {
+    code = "ILLEGAL_CHARACTER_STRUCTURE";
+    message = "角色包含共享契约之外的字段，当前结果不可继续使用。";
+    suggestedAction = "移除契约外字段，不要静默扩展 CharacterDraft。";
+  } else if (!hasContractPath(character, contractPath)) {
+    code = "MISSING_REQUIRED_FIELD";
+    message = "角色缺少共享契约要求的必填字段，当前结果不可继续使用。";
+    suggestedAction = "补齐该必填字段并保持契约规定的类型。";
+  }
+
+  const report = {
+    status: "fail",
+    issues: [
+      {
+        code,
+        severity: "error",
+        fieldPath,
+        message,
+        evidence: `${contractPath}: ${reason}`,
+        suggestedAction,
+      },
+    ],
+  };
+  assertRuleCheckReport(report);
+  return report;
+}
+
+/**
  * @param {string} text
  * @param {number} [maxLength]
  * @returns {string}
@@ -337,32 +418,38 @@ function findRepeatedFragment(sources) {
 /**
  * 对完整角色草稿执行同步、确定性的质量规则检查。
  *
- * @param {import("../contracts.js").CharacterDraft} character
+ * @param {unknown} character
  * @returns {import("../contracts.js").RuleCheckReport}
  */
 export function checkRules(character) {
-  assertCharacterDraft(character);
+  try {
+    assertCharacterDraft(character);
+  } catch (error) {
+    return createBlockingStructureReport(character, error);
+  }
+
+  const validCharacter = /** @type {import("../contracts.js").CharacterDraft} */ (character);
 
   /** @type {import("../contracts.js").RuleCheckIssue[]} */
   const issues = [];
   const requiredFields = [
-    ["publicInfo.name", character.publicInfo.name, "REQUIRED_NAME", "角色名称"],
-    ["persona.identity", character.persona.identity, "REQUIRED_IDENTITY", "角色身份"],
+    ["publicInfo.name", validCharacter.publicInfo.name, "REQUIRED_NAME", "角色名称"],
+    ["persona.identity", validCharacter.persona.identity, "REQUIRED_IDENTITY", "角色身份"],
     [
       "persona.currentGoal",
-      character.persona.currentGoal,
+      validCharacter.persona.currentGoal,
       "REQUIRED_CURRENT_GOAL",
       "当前目标",
     ],
     [
       "persona.contradiction",
-      character.persona.contradiction,
+      validCharacter.persona.contradiction,
       "REQUIRED_CORE_CONFLICT",
       "核心矛盾",
     ],
     [
       "relationship.initialRelation",
-      character.relationship.initialRelation,
+      validCharacter.relationship.initialRelation,
       "REQUIRED_INITIAL_RELATION",
       "初始关系",
     ],
@@ -384,7 +471,7 @@ export function checkRules(character) {
 
   for (const field of DIALOGUE_STYLE_FIELDS) {
     const fieldPath = `dialogueStyle.${field}`;
-    if (!isNonEmptyString(character.dialogueStyle[field])) {
+    if (!isNonEmptyString(validCharacter.dialogueStyle[field])) {
       addIssue(
         issues,
         "REQUIRED_DIALOGUE_STYLE",
@@ -401,7 +488,7 @@ export function checkRules(character) {
   const evaluatedTextSources = [];
   for (const field of OPENING_FIELDS) {
     const fieldPath = `openings.${field}`;
-    const opening = character.openings[field];
+    const opening = validCharacter.openings[field];
     if (!isNonEmptyString(opening)) {
       addIssue(
         issues,
@@ -465,27 +552,27 @@ export function checkRules(character) {
       "SIMILAR_OPENINGS",
       "warning",
       "openings",
-      "至少两个开场高度重复，难以提供差异化互动入口。",
+      "有限字符集合启发式发现至少两个开场可能过于相似。",
       similarOpeningPairs.join("；"),
       "分别改写为剧情、日常和张力不同的场景，并改变事件与用户可回应点。",
     );
   }
 
-  const concreteBehaviors = nonEmptyStrings(character.persona.concreteBehaviors);
+  const concreteBehaviors = nonEmptyStrings(validCharacter.persona.concreteBehaviors);
   if (concreteBehaviors.length < 2) {
     addIssue(
       issues,
       "INSUFFICIENT_CONCRETE_BEHAVIORS",
       "warning",
       "persona.concreteBehaviors",
-      "可观察的具体行为少于两条，抽象性格缺少稳定的行为依据。",
+      "可观察的具体行为少于两条，可能不足以稳定支撑抽象性格。",
       `当前只有 ${concreteBehaviors.length} 条非空具体行为。`,
       "至少补充两条包含触发情境和可观察动作的行为。",
     );
   }
   if (
-    isNonEmptyString(character.persona.contradiction) &&
-    !hasBehaviorEvidenceForContradiction(character.persona.contradiction, concreteBehaviors)
+    isNonEmptyString(validCharacter.persona.contradiction) &&
+    !hasBehaviorEvidenceForContradiction(validCharacter.persona.contradiction, concreteBehaviors)
   ) {
     addIssue(
       issues,
@@ -493,14 +580,14 @@ export function checkRules(character) {
       "warning",
       "persona.concreteBehaviors",
       "有限词面启发式未找到核心矛盾对应的具体行为；这不代表对复杂语义的可靠理解。",
-      `核心矛盾为 ${quoteSnippet(character.persona.contradiction)}，现有行为中未命中相同的 2—4 字词面片段。`,
+      `核心矛盾为 ${quoteSnippet(validCharacter.persona.contradiction)}，现有行为中未命中相同的 2—4 字词面片段。`,
       "增加一条明确展示矛盾两面的触发情境、动作和选择。",
     );
   }
 
   if (
-    isNonEmptyString(character.persona.currentGoal) &&
-    isOnlyDependentGoal(character.persona.currentGoal)
+    isNonEmptyString(validCharacter.persona.currentGoal) &&
+    isOnlyDependentGoal(validCharacter.persona.currentGoal)
   ) {
     addIssue(
       issues,
@@ -508,19 +595,19 @@ export function checkRules(character) {
       "warning",
       "persona.currentGoal",
       "有限关键词启发式判断当前目标可能只依附于用户；这不代表对复杂语义的可靠理解。",
-      `当前目标仅留下陪伴、保护或爱用户一类表达：${quoteSnippet(character.persona.currentGoal)}`,
+      `当前目标仅留下陪伴、保护或爱用户一类表达：${quoteSnippet(validCharacter.persona.currentGoal)}`,
       "补充角色独立于关系之外想完成、改变或承担的具体目标。",
     );
   }
 
-  const initiativeRules = nonEmptyStrings(character.persona.initiativeRules);
+  const initiativeRules = nonEmptyStrings(validCharacter.persona.initiativeRules);
   if (initiativeRules.length < 2) {
     addIssue(
       issues,
       "INSUFFICIENT_INITIATIVE_RULES",
       "warning",
       "persona.initiativeRules",
-      "主动性规则少于两条。",
+      "主动性规则少于两条，可能不足以稳定指导主动行为。",
       `当前只有 ${initiativeRules.length} 条非空主动性规则。`,
       "至少补充两条角色会主动发起、推进或跟进的具体规则。",
     );
@@ -537,26 +624,26 @@ export function checkRules(character) {
       "PASSIVE_ONLY_INITIATIVE",
       "warning",
       "persona.initiativeRules",
-      "有限关键词启发式显示所有规则都只要求回应、倾听或等待。",
+      "有限关键词启发式显示这些规则可能都只要求回应、倾听或等待。",
       `命中的规则为：${initiativeRules.map((rule) => quoteSnippet(rule, 30)).join("；")}`,
       "加入角色主动提出话题、安排事件或推动剧情的规则，同时保留用户决定权。",
     );
   }
 
-  const forbiddenBehaviors = nonEmptyStrings(character.persona.forbiddenBehaviors);
+  const forbiddenBehaviors = nonEmptyStrings(validCharacter.persona.forbiddenBehaviors);
   if (forbiddenBehaviors.length < 2) {
     addIssue(
       issues,
       "INSUFFICIENT_FORBIDDEN_BEHAVIORS",
       "warning",
       "persona.forbiddenBehaviors",
-      "禁止行为少于两条，角色边界不够明确。",
+      "禁止行为少于两条，角色边界可能不够明确。",
       `当前只有 ${forbiddenBehaviors.length} 条非空禁止行为。`,
       "至少补充两条明确、可判断是否违反的禁止行为。",
     );
   }
 
-  const examples = character.dialogueStyle.examples;
+  const examples = validCharacter.dialogueStyle.examples;
   const nonEmptyCharacterReplies = [];
   let completeExampleCount = 0;
   for (let index = 0; index < examples.length; index += 1) {
@@ -613,7 +700,7 @@ export function checkRules(character) {
       "INSUFFICIENT_DIALOGUE_EXAMPLES",
       "warning",
       "dialogueStyle.examples",
-      "user 与 character 均非空的完整示例对话少于三组。",
+      "完整示例对话少于三组，可能不足以展示差异化回复方式。",
       `当前 ${examples.length} 组中有 ${completeExampleCount} 组内容完整。`,
       "补足至少三组不同情境且双方内容均非空的示例对话。",
     );
@@ -625,7 +712,7 @@ export function checkRules(character) {
       "UNIFORM_DIALOGUE_RESPONSES",
       "warning",
       "dialogueStyle.examples",
-      "角色示例回复全部使用相同或明显一致的句式。",
+      "有限句式启发式显示角色示例回复可能过于一致。",
       `检测到 ${nonEmptyCharacterReplies.length} 条回复具有相同正文，或具有相同四字开头和标点结构。`,
       "让回复在动作、句长、提问方式和剧情功能上体现差异。",
     );
@@ -648,7 +735,7 @@ export function checkRules(character) {
   const bannedPhrases = [
     ...new Set([
       ...BUILT_IN_BANNED_PHRASES,
-      ...character.dialogueStyle.bannedPhrases.map((phrase) => phrase.trim()),
+      ...validCharacter.dialogueStyle.bannedPhrases.map((phrase) => phrase.trim()),
     ]),
   ].filter((phrase) => phrase.length > 0);
 
@@ -668,7 +755,7 @@ export function checkRules(character) {
         "REPEATED_BANNED_PHRASE",
         "warning",
         hitPaths[0].split("（")[0],
-        "禁止套话在开场或角色示例回复中重复出现。",
+        "有限字面匹配发现禁止短语重复命中，可能形成套话。",
         `短语“${phrase}”共命中 ${totalHits} 次：${hitPaths.join("、")}`,
         "重写重复命中的内容，用符合角色经历和当下情境的具体表达替代。",
       );
@@ -682,7 +769,7 @@ export function checkRules(character) {
       "REPEATED_EXPRESSION",
       "warning",
       repeatedFragment.paths[0],
-      "多个开场或角色示例回复复用了明显相同的短片段。",
+      "有限片段匹配发现多个开场或示例回复可能复用了相同表达。",
       `重复片段“${repeatedFragment.fragment}”共出现 ${repeatedFragment.occurrences} 次，涉及：${repeatedFragment.paths.join("、")}`,
       "改写其中至少一处，让措辞服务于各自不同的场景或对话目的。",
     );

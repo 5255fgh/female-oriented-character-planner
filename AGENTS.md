@@ -1,39 +1,36 @@
 # Mandatory Project Rules
 
-## Source of truth
-- Before editing, read PROJECT_SPEC.md and src/contracts.js.
-- The task prompt, PROJECT_SPEC.md and src/contracts.js are authoritative.
+## Source Of Truth
+
+- Before editing, read `PROJECT_SPEC.md` and `src/contracts.js`.
+- The task prompt, `PROJECT_SPEC.md`, and `src/contracts/` are authoritative.
 - Never rename or silently extend public fields and interfaces.
 
-## Scope
-- Implement only the current task.
-- Modify only files explicitly assigned to the current Worktree.
-- Do not add unrelated features, future plans, analytics, logging systems, design systems or test frameworks.
-- Do not edit package.json, PROJECT_SPEC.md or src/contracts.js outside the foundation/final-integration task.
-- Do not add dependencies after the foundation commit.
+## Scope And Ownership
 
-## Stack
-- Vanilla JavaScript and Vite only.
-- No React, Vue, TypeScript, backend framework, LangChain, Agent framework, vector database or cloud database.
-- Keep functions direct and avoid unnecessary classes.
+- Implement only the current task and modify only its assigned paths.
+- `docs/parallel/MODULE_OWNERSHIP.md` is the canonical ownership map; cross-module edits are forbidden.
+- Shared contract changes are owned by foundation/integration tasks. Other tasks record them under `Requested shared change` in their handoff.
+- Do not add unrelated features, frameworks, dependencies, analytics, logging systems, design systems, or test frameworks.
 
-## LLM
-- Structured responses must be raw JSON, not Markdown fences.
-- Validate model JSON before use.
-- Retry at most once for empty or invalid JSON.
-- Field regeneration returns only { fieldPath, value }.
-- Never overwrite the complete character during field regeneration.
+## Pull Requests And Handoffs
+
+- Create feature branches from the latest `integration/intelligent-v2`.
+- Target every feature PR at `integration/intelligent-v2`, never directly at `main`.
+- Every module creates `docs/handoffs/<module>.md` from `docs/handoffs/TEMPLATE.md` and records APIs, migrations, verification, integration notes, shared-change requests, and real open issues.
+
+## Stack And LLM
+
+- Use direct Vanilla JavaScript ES modules and Vite; avoid unnecessary classes.
+- Structured model responses are raw JSON, validated before use, with at most one retry for empty or invalid JSON.
+- Field regeneration returns only `{ fieldPath, value }` and never overwrites the complete character.
 
 ## Secrets
-- Never commit API keys.
-- Never place secrets in VITE_ variables.
-- Never store API keys in IndexedDB or localStorage.
 
-## Verification
-- Run npm run build.
-- Run npm run smoke.
-- Fix failures caused by the current task.
-- Commit all changes.
+- Never commit API keys, put secrets in `VITE_` variables, or store keys in IndexedDB/localStorage.
 
-## Final response
-Only report branch, commit hash, files changed, commands run and a real blocker if one exists.
+## Verification And Delivery
+
+- Run `npm run smoke` and `npm run build`; fix failures caused by the current task.
+- Commit all task changes.
+- Final responses only report branch, commit hash, files changed, commands run, and a real blocker if one exists.

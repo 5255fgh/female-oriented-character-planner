@@ -3,10 +3,11 @@ import prompt from "../../prompts/concept-generation.md?raw";
 import {
   assertConceptCandidates,
   assertCreativeBrief,
+  createId,
 } from "../contracts.js";
 
+const CONCEPT_GENERATION_PROMPT_VERSION = "concept-generation/v1";
 const CONCEPT_CANDIDATE_FIELDS = [
-  "id: string",
   "name: string",
   "oneLiner: string",
   "coreExperience: string",
@@ -46,6 +47,19 @@ function normalizeCandidates(response) {
   );
 }
 
+function addLocalCandidateIds(candidates) {
+  if (!Array.isArray(candidates)) {
+    return candidates;
+  }
+  return candidates.map((candidate) => {
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return candidate;
+    }
+    const { id: _modelId, ...content } = candidate;
+    return { id: createId("concept"), ...content };
+  });
+}
+
 /**
  * @param {import("../contracts.js").ConceptCandidate[]} candidates
  */
@@ -76,6 +90,7 @@ export async function generateConcepts(brief, llmClient) {
     {
       role: "user",
       content: [
+        `提示词版本：${CONCEPT_GENERATION_PROMPT_VERSION}`,
         "请根据以下完整创作简报生成角色概念候选。",
         `创作简报 JSON：\n${JSON.stringify(brief, null, 2)}`,
         `ConceptCandidate 字段说明（每项必须且只能包含这些字段）：\n${CONCEPT_CANDIDATE_FIELDS}`,
@@ -88,7 +103,9 @@ export async function generateConcepts(brief, llmClient) {
     task: "concept-generation",
     messages,
   });
-  const candidates = assertConceptCandidates(normalizeCandidates(response));
+  const candidates = assertConceptCandidates(
+    addLocalCandidateIds(normalizeCandidates(response)),
+  );
   assertDistinctCandidates(candidates);
   return candidates;
 }

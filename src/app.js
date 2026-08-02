@@ -1,40 +1,8 @@
 import "./styles.css";
 
-import {
-  applyFieldPatch,
-  assertCharacterDraft,
-  assertCharacterProject,
-  assertCreativeBrief,
-  countUnicodeCharacters,
-  getValueAtPath,
-} from "./contracts.js";
-import { checkRules } from "./evaluation/rule-checker.js";
-import { runDialogueTest } from "./evaluation/dialogue-tester.js";
-import { expandCharacter } from "./generation/character-generator.js";
-import { generateConcepts } from "./generation/concept-generator.js";
-import { regenerateField } from "./generation/field-regenerator.js";
-import { createLLMClient } from "./llm/openai-compatible-client.js";
-import { createMockLLMClient } from "./mock/mock-llm-client.js";
-import { MAOXIANG_FLOWS } from "./platforms/maoxiang/config.js";
-import { generateMaoxiangPack } from "./platforms/maoxiang/pack-generator.js";
-import { validatePlatformPack } from "./platforms/maoxiang/pack-validator.js";
-import {
-  deleteProject,
-  exportProjectJson,
-  exportProjectMarkdown,
-  getProject,
-  importProjectJson,
-  listProjects,
-  listVersions,
-  restoreVersion,
-  saveProject,
-} from "./storage/index.js";
-import {
-  appState,
-  markProjectChanged,
-  replaceCurrentProject,
-  resetCurrentProject,
-} from "./app-state.js";
+import { assertProjectDocument } from "./contracts.js";
+import { appState } from "./app-state.js";
+import { createTaskRunner } from "./workflow/index.js";
 import { createDownloadFilename, downloadText } from "./ui/download.js";
 import {
   copyText,
@@ -42,64 +10,112 @@ import {
   scrollToFieldPath,
   toReadableError,
 } from "./ui/dom.js";
-import { assertBriefRequirements, readCreativeBrief } from "./ui/forms.js";
+import {
+  readCreativeBrief,
+  readQuestionAnswers,
+  readQuickInput,
+} from "./ui/forms.js";
 import { renderApp } from "./ui/renderers.js";
+import {
+  AUTOSAVE_LABELS,
+  autosaveStatusClass,
+} from "./ui/rendering.js";
+import { runSimulationForProject } from "./ui/actions/evaluation-actions.js";
+import {
+  appendGenerationRecord,
+  addCharacterRepeater,
+  analyzeSeedForProject,
+  createPackCopyText,
+  editPlatformPack,
+  finishActiveProgress,
+  generatePlatformPackForProject,
+  generatePrimaryContent,
+  getActivePack,
+  getLLMClientForState,
+  getPackBlock,
+  prepareSeedForProject,
+  removeCharacterRepeater,
+  resetProgress,
+  runQuickChecksForProject,
+  selectConceptForProject,
+  setProgressStage,
+  throwIfAborted,
+  updateCharacterField,
+} from "./ui/actions/generation-actions.js";
+import {
+  canCopyPlatformBlock,
+  canCopyPlatformPack,
+} from "./ui/platform-copy.js";
+import {
+  confirmCharacterRevision,
+  discardCharacterRevision,
+  proposeCharacterRevision,
+  undoLastCharacterRevision,
+} from "./ui/actions/editing-actions.js";
+import {
+  createProject,
+  createProjectAutosaveService,
+  deleteProjectFromState,
+  dismissRecovery,
+  exportSavedProject,
+  importProjectIntoState,
+  loadProjectIntoState,
+  refreshSavedProjects,
+  restoreProjectVersion,
+  saveCurrentProject,
+  saveProjectCheckpoint,
+  setProjectMode,
+  setProjectTitle,
+} from "./ui/actions/project-actions.js";
 
 const app = document.querySelector("#app");
 const model = import.meta.env.VITE_LLM_MODEL || "deepseek-v4-flash";
-
-const MOCK_SCENARIO_ID_MAP = {
-  "explicit-boundary": "refusal",
-  silence: "short_replies",
-  accusation: "motive_question",
-  "daily-care": "low_mood",
-  "repair-after-conflict": "user_approaches",
-  jealousy: "important_other",
-  "dangerous-choice": "out_of_character_request",
-  "user-failure": "long_conversation_progress",
-};
+const taskRunner = createTaskRunner();
 
 function render() {
   app.innerHTML = renderApp(appState, { model });
 }
 
-function canVisitStep(step) {
-  if (step <= 1) {
-    return true;
-  }
-  if (step === 2) {
-    return appState.project.concepts.length === 3;
-  }
-  if (step <= 4) {
-    return Boolean(appState.project.character);
-  }
-  if (step === 5) {
-    return Boolean(appState.project.ruleReport && appState.project.simulationReport);
-  }
-  return appState.project.platformPacks.length > 0;
+function getLLMClient() {
+  return getLLMClientForState(appState, model);
 }
 
-function syncStepNavigation() {
-  app.querySelectorAll('[data-action="go-step"][data-step]').forEach((button) => {
-    button.disabled = appState.loading || !canVisitStep(Number(button.dataset.step));
+function syncAutosaveUi() {
+  const status = appState.autosaveStatus || "idle";
+  app.querySelectorAll("[data-save-status]").forEach((element) => {
+    element.textContent = AUTOSAVE_LABELS[status] || status;
+    element.className = `status-pill ${autosaveStatusClass(status)}`;
+    element.dataset.status = status;
   });
 }
 
-function syncUnsavedProjectUi() {
-  const status = app.querySelector("[data-save-status]");
-  if (status) {
-    status.textContent = "有未保存修改";
-    status.className = "status-pill status-warning";
-  }
+const autosave = createProjectAutosaveService({
+  onStatus(event) {
+    if (event.projectId !== appState.project.id) return;
+    appState.autosaveStatus = event.status;
+    if (event.status === "saved") {
+      appState.dirty = false;
+      appState.autosaveError = "";
+    } else if (event.status === "error") {
+      appState.dirty = true;
+      appState.autosaveError = toReadableError(event.error);
+      render();
+      return;
+    }
+    syncAutosaveUi();
+  },
+});
 
-  app.querySelectorAll('[data-action="export-json"], [data-action="export-markdown"]')
-    .forEach((button) => {
-      button.disabled = true;
-    });
-
-  const helper = app.querySelector("[data-export-helper]");
-  if (helper) {
-    helper.textContent = "请先保存当前修改，再导出最新版本。";
+function scheduleAutosave() {
+  try {
+    assertProjectDocument(appState.project);
+    appState.dirty = true;
+    autosave.schedule(appState.project);
+    syncAutosaveUi();
+  } catch (error) {
+    appState.autosaveStatus = "error";
+    appState.autosaveError = toReadableError(error);
+    render();
   }
 }
 
@@ -110,10 +126,7 @@ function showError(error) {
 }
 
 async function runTask(action, task) {
-  if (appState.loading) {
-    return;
-  }
-
+  if (taskRunner.isRunning(action) || appState.loading) return;
   appState.loading = true;
   appState.pendingAction = action;
   appState.error = "";
@@ -121,9 +134,11 @@ async function runTask(action, task) {
   render();
 
   try {
-    await task();
+    await taskRunner.run(action, task);
   } catch (error) {
-    appState.error = toReadableError(error);
+    if (error?.name !== "AbortError") {
+      appState.error = toReadableError(error);
+    }
   } finally {
     appState.loading = false;
     appState.pendingAction = "";
@@ -131,661 +146,512 @@ async function runTask(action, task) {
   }
 }
 
-function findRequestedFieldPath(request) {
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-  const content = messages
-    .map((message) => (typeof message?.content === "string" ? message.content : ""))
-    .join("\n");
-  return content.match(/唯一允许重写的字段路径：([^\r\n]+)/)?.[1]?.trim() || "";
+function activateStage(stageId) {
+  setProgressStage(appState, stageId, "active");
+  appState.currentStep = "progress";
+  render();
 }
 
-function findRequestedInstruction(request) {
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-  const content = messages
-    .map((message) => (typeof message?.content === "string" ? message.content : ""))
-    .join("\n");
-  return content.match(/定向修改要求：\s*([\s\S]*?)\s*只返回 \{"fieldPath"/)?.[1]?.trim() || "按当前方向细化";
+function completeStage(stageId) {
+  setProgressStage(appState, stageId, "complete");
+  render();
 }
 
-function createCompatibleMockValue(currentValue, instruction, fallbackValue) {
-  if (typeof currentValue === "string") {
-    const current = currentValue.trim();
-    return current
-      ? `${current}\n（Mock 已按要求调整：${instruction}）`
-      : `Mock 调整结果：${instruction}`;
+async function persistCheckpoint(createVersion) {
+  try {
+    await autosave.flush();
+    appState.autosaveStatus = "saving";
+    syncAutosaveUi();
+    await saveProjectCheckpoint(appState, { createVersion });
+    appState.autosaveStatus = "saved";
+    appState.autosaveError = "";
+  } catch (error) {
+    appState.autosaveStatus = "error";
+    appState.autosaveError = toReadableError(error);
   }
+}
 
-  if (Array.isArray(currentValue) && currentValue.every((item) => typeof item === "string")) {
-    if (currentValue.length === 0) {
-      return [`Mock 调整结果：${instruction}`];
-    }
-    return currentValue.map((item, index) =>
-      index === 0 ? `${item}（Mock 已按要求调整：${instruction}）` : item,
-    );
+async function runDefaultPlatformStage(signal) {
+  setProgressStage(appState, "check", "skipped");
+  activateStage("platform");
+  await generatePlatformPackForProject(appState, getLLMClient(), signal);
+  throwIfAborted(signal);
+  completeStage("platform");
+
+  appendGenerationRecord(appState, "completed");
+  appState.progressStatus = "complete";
+  appState.currentStep = "result";
+  appState.notice = "角色或故事与默认平台文本已生成；质量检查可按需运行。";
+  render();
+  await persistCheckpoint(true);
+}
+
+async function runPrimaryAndDefaultOutput(signal) {
+  activateStage("generate");
+  const outcome = await generatePrimaryContent(appState, getLLMClient(), signal);
+  throwIfAborted(signal);
+  completeStage("generate");
+
+  if (outcome === "concepts") {
+    appState.progressStatus = "awaiting-selection";
+    appState.currentStep = "concepts";
+    scheduleAutosave();
+    return;
   }
-
-  return fallbackValue;
+  await runDefaultPlatformStage(signal);
 }
 
-function adaptMockDialogueResponse(response) {
-  const wrapped =
-    response !== null &&
-    typeof response === "object" &&
-    !Array.isArray(response) &&
-    Object.prototype.hasOwnProperty.call(response, "report");
-  const report = wrapped ? response.report : response;
-
-  if (!report || !Array.isArray(report.scenarios)) {
-    return response;
-  }
-
-  const adaptedReport = {
-    ...report,
-    scenarios: report.scenarios.map((scenario) => ({
-      ...scenario,
-      scenarioId: MOCK_SCENARIO_ID_MAP[scenario.scenarioId] || scenario.scenarioId,
-    })),
-  };
-  return wrapped ? { ...response, report: adaptedReport } : adaptedReport;
-}
-
-function createAppMockClient() {
-  const baseClient = createMockLLMClient();
-
-  return {
-    completeText(request) {
-      return baseClient.completeText(request);
-    },
-    async completeJson(request) {
-      const response = await baseClient.completeJson(request);
-
-      // 已锁定 Mock 使用较早的场景标识；仅在应用接线层映射到评估器固定集合。
-      if (request.task === "dialogue-evaluation") {
-        return adaptMockDialogueResponse(response);
-      }
-
-      // 已锁定 Mock 只有一个固定补丁；其他字段保持同一接口形状以便完整演示。
-      if (request.task === "field-regeneration") {
-        const requestedPath = findRequestedFieldPath(request);
-        if (requestedPath && response.fieldPath !== requestedPath) {
-          const currentValue = getValueAtPath(appState.project.character, requestedPath);
-          return {
-            fieldPath: requestedPath,
-            value: createCompatibleMockValue(
-              currentValue,
-              findRequestedInstruction(request),
-              response.value,
-            ),
-          };
-        }
-      }
-
-      return response;
-    },
-  };
-}
-
-function getLLMClient() {
-  return appState.mode === "mock"
-    ? createAppMockClient()
-    : createLLMClient({ model });
-}
-
-async function refreshSavedProjects() {
-  appState.savedProjects = await listProjects();
-}
-
-async function refreshVersions() {
-  const isStored = appState.savedProjects.some(
-    (project) => project.id === appState.project.id,
-  );
-  appState.versions = isStored ? await listVersions(appState.project.id) : [];
-}
-
-function goToField(fieldPath) {
-  appState.activeFieldPath = fieldPath;
-  appState.currentStep = 3;
+async function beginGeneration(task) {
+  if (taskRunner.isRunning("generation")) return;
+  appState.loading = true;
+  appState.pendingAction = "generation";
   appState.error = "";
   appState.notice = "";
   render();
-  requestAnimationFrame(() => scrollToFieldPath(fieldPath));
-}
 
-function invalidateCharacterOutputs() {
-  appState.project.ruleReport = null;
-  appState.project.simulationReport = null;
-  appState.project.platformPacks = [];
-}
-
-function invalidateBriefOutputs() {
-  appState.project.concepts = [];
-  appState.project.selectedConceptId = "";
-  appState.project.character = null;
-  invalidateCharacterOutputs();
-  appState.selectedConceptId = "";
-  appState.activeFieldPath = "";
-  appState.fieldInstructions = {};
-}
-
-function updateCharacterField(path, value) {
-  const nextCharacter = applyFieldPatch(appState.project.character, {
-    fieldPath: path,
-    value,
-  });
-  assertCharacterDraft(nextCharacter);
-  appState.project.character = nextCharacter;
-  invalidateCharacterOutputs();
-  markProjectChanged();
-  syncStepNavigation();
-}
-
-function updateBriefFromForm(form) {
-  const brief = readCreativeBrief(form);
-  const briefChanged = JSON.stringify(brief) !== JSON.stringify(appState.project.brief);
-  appState.project.brief = brief;
-  const title = form.elements.projectTitle?.value;
-  if (typeof title === "string") {
-    appState.project.title = title;
-  }
-  if (briefChanged) {
-    invalidateBriefOutputs();
-  }
-  markProjectChanged();
-  syncStepNavigation();
-}
-
-function addRepeater(kind) {
-  if (kind === "stages") {
-    const stages = appState.project.character.relationship.stages;
-    updateCharacterField("relationship.stages", [
-      ...stages,
-      { name: "新阶段", trigger: "", behavior: "" },
-    ]);
-  } else if (kind === "examples") {
-    const examples = appState.project.character.dialogueStyle.examples;
-    updateCharacterField("dialogueStyle.examples", [
-      ...examples,
-      { user: "", character: "" },
-    ]);
-  }
-  render();
-}
-
-function removeRepeater(kind, index) {
-  if (kind === "stages") {
-    const stages = appState.project.character.relationship.stages.filter(
-      (_, itemIndex) => itemIndex !== index,
-    );
-    updateCharacterField("relationship.stages", stages);
-  } else if (kind === "examples") {
-    const examples = appState.project.character.dialogueStyle.examples.filter(
-      (_, itemIndex) => itemIndex !== index,
-    );
-    updateCharacterField("dialogueStyle.examples", examples);
-  }
-  render();
-}
-
-function prepareEditedPack(pack, blockId, text) {
-  const blocks = pack.blocks.map((block) => {
-    if (block.id !== blockId) {
-      return block;
+  try {
+    await taskRunner.run("generation", ({ signal }) => task(signal));
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      finishActiveProgress(appState, "cancelled");
+      appendGenerationRecord(appState, "cancelled");
+      appState.notice = "任务已取消。";
+      scheduleAutosave();
+    } else {
+      finishActiveProgress(appState, "failed");
+      appendGenerationRecord(appState, "failed");
+      appState.error = toReadableError(error);
+      scheduleAutosave();
     }
-    const currentLength = countUnicodeCharacters(text);
-    return {
-      ...block,
-      text,
-      currentLength,
-      valid: block.maxLength === null || currentLength <= block.maxLength,
-    };
-  });
-  const validated = validatePlatformPack({ ...pack, blocks });
-  const flow = MAOXIANG_FLOWS[validated.flowId];
+    appState.currentStep = "progress";
+  } finally {
+    appState.loading = false;
+    appState.pendingAction = "";
+    render();
+  }
+}
 
-  return {
-    ...validated,
-    blocks: validated.blocks.map((block) => ({
-      ...block,
-      valid:
-        block.valid &&
-        (!flow[block.id]?.required || countUnicodeCharacters(block.text) > 0),
-    })),
-  };
+function startFromQuickInput(form, submitter) {
+  let quickInput;
+  let advancedBrief = null;
+  try {
+    quickInput = readQuickInput(form);
+    if (appState.projectKind === "character") {
+      advancedBrief = readCreativeBrief(form, "advanced-");
+      appState.advancedBrief = advancedBrief;
+    }
+    appState.generationMode = submitter?.dataset.generationMode === "explore"
+      ? "explore"
+      : "direct";
+    prepareSeedForProject(appState, quickInput, advancedBrief);
+  } catch (error) {
+    showError(error);
+    return;
+  }
+
+  resetProgress(appState);
+  activateStage("analyze");
+  void beginGeneration(async (signal) => {
+    const questions = await analyzeSeedForProject(
+      appState,
+      getLLMClient(),
+      signal,
+    );
+    completeStage("analyze");
+    if (questions.length > 0) {
+      appState.progressStatus = "awaiting-input";
+      appState.currentStep = "questions";
+      scheduleAutosave();
+      return;
+    }
+    await runPrimaryAndDefaultOutput(signal);
+  });
+}
+
+function continueFromQuestions(form, submitter) {
+  const answerMode = submitter?.dataset.answerMode || "current";
+  let answers = answerMode === "skip"
+    ? {}
+    : readQuestionAnswers(form, appState.questions || []);
+  if (answerMode === "recommended") {
+    answers = { ...answers };
+    for (const question of appState.questions.slice(0, 3)) {
+      if (!answers[question.id]) answers[question.id] = question.recommended;
+    }
+  }
+  appState.answers = answers;
+  appState.currentStep = "progress";
+  appState.progressStatus = "running";
+  activateStage("generate");
+  void beginGeneration((signal) => runPrimaryAndDefaultOutput(signal));
 }
 
 function updatePackIndicators(pack, block) {
   const key = `${pack.flowId}:${block.id}`;
-  const lengthElement = Array.from(document.querySelectorAll("[data-pack-length]"))
+  const lengthElement = Array.from(app.querySelectorAll("[data-pack-length]"))
     .find((element) => element.dataset.packLength === key);
-  const validElement = Array.from(document.querySelectorAll("[data-pack-valid]"))
+  const validElement = Array.from(app.querySelectorAll("[data-pack-valid]"))
     .find((element) => element.dataset.packValid === key);
-  const overElement = Array.from(document.querySelectorAll("[data-pack-over]"))
+  const overElement = Array.from(app.querySelectorAll("[data-pack-over]"))
     .find((element) => element.dataset.packOver === key);
+  const blockElement = validElement?.closest(".pack-block");
+  const blockCopy = blockElement?.querySelector('[data-action="copy-pack-block"]');
+  const wholeCopy = app.querySelector('[data-action="copy-pack"]');
   const overBy = block.maxLength === null
     ? 0
     : Math.max(0, block.currentLength - block.maxLength);
+  const invalidReason = overBy > 0
+    ? `已知超限 ${overBy} 字；保留全文，不会自动截断。`
+    : !block.valid && block.text.trim().length === 0
+      ? "必填字段为空。"
+      : !block.valid
+        ? "字段不满足已知平台规则。"
+        : "";
 
-  if (lengthElement) {
-    lengthElement.textContent = `当前 ${block.currentLength} 字`;
-  }
+  if (lengthElement) lengthElement.textContent = `${block.currentLength} 字`;
   if (validElement) {
-    validElement.textContent = block.valid ? "有效" : "需调整";
+    validElement.textContent = block.valid ? "有效" : "无效";
     validElement.className = `status-pill ${block.valid ? "status-pass" : "status-fail"}`;
   }
   if (overElement) {
-    overElement.textContent = overBy > 0 ? `超出 ${overBy} 字` : "";
-    overElement.classList.toggle("is-visible", overBy > 0);
+    overElement.textContent = invalidReason;
+    overElement.classList.toggle("is-visible", Boolean(invalidReason));
   }
-}
-
-function handlePackInput(target) {
-  const flowId = target.dataset.packFlow;
-  const blockId = target.dataset.packBlock;
-  const packIndex = appState.project.platformPacks.findIndex(
-    (pack) => pack.flowId === flowId,
-  );
-  if (packIndex === -1) {
-    return;
+  blockElement?.classList.toggle("pack-invalid", !block.valid);
+  if (blockCopy) {
+    const copyAllowed = canCopyPlatformBlock(appState, block);
+    blockCopy.disabled = !copyAllowed;
+    blockCopy.dataset.copyValid = String(copyAllowed);
   }
-
-  const pack = prepareEditedPack(
-    appState.project.platformPacks[packIndex],
-    blockId,
-    target.value,
-  );
-  appState.project.platformPacks = appState.project.platformPacks.map(
-    (item, index) => (index === packIndex ? pack : item),
-  );
-  markProjectChanged();
-  const block = pack.blocks.find((item) => item.id === blockId);
-  if (block) {
-    updatePackIndicators(pack, block);
+  if (wholeCopy) {
+    const allValid = canCopyPlatformPack(appState, pack);
+    wholeCopy.disabled = !allValid;
+    wholeCopy.dataset.copyValid = String(allValid);
   }
-}
-
-function getPackBlock(flowId, blockId) {
-  return appState.project.platformPacks
-    .find((pack) => pack.flowId === flowId)
-    ?.blocks.find((block) => block.id === blockId);
-}
-
-function assertProjectReadyToSave() {
-  appState.project.title = appState.project.title.trim();
-  if (!appState.project.title) {
-    throw new Error("请填写项目标题后再保存。" );
-  }
-  if (appState.project.platformPacks.length === 0) {
-    throw new Error("请先生成猫箱输入包后再保存。" );
-  }
-  appState.project.selectedConceptId = appState.selectedConceptId;
-  assertCharacterProject(appState.project);
 }
 
 app.addEventListener("submit", (event) => {
   const form = event.target;
-  if (!(form instanceof HTMLFormElement)) {
-    return;
-  }
-
+  if (!(form instanceof HTMLFormElement)) return;
   event.preventDefault();
-  if (form.dataset.form === "new-project") {
-    const title = String(new FormData(form).get("title") || "").trim();
-    if (!title) {
-      showError(new Error("请填写项目标题。" ));
-      return;
-    }
-    resetCurrentProject(title);
-    render();
-    return;
-  }
+  if (appState.loading) return;
 
-  if (form.dataset.form === "creative-brief") {
-    let brief;
-    try {
-      brief = readCreativeBrief(form);
-      assertBriefRequirements(brief);
-      assertCreativeBrief(brief);
-    } catch (error) {
-      showError(error);
-      return;
-    }
-
-    const projectTitle = String(form.elements.projectTitle?.value || "").trim();
-    if (!projectTitle) {
-      showError(new Error("请填写项目标题。" ));
-      return;
-    }
-
-    void runTask("generate-concepts", async () => {
-      const concepts = await generateConcepts(brief, getLLMClient());
-      appState.project.title = projectTitle;
-      appState.project.brief = brief;
-      appState.project.concepts = concepts;
-      appState.project.selectedConceptId = "";
-      appState.project.character = null;
-      appState.project.ruleReport = null;
-      appState.project.simulationReport = null;
-      appState.project.platformPacks = [];
-      appState.selectedConceptId = "";
-      appState.versions = [];
-      appState.currentStep = 2;
-      markProjectChanged();
-    });
+  if (form.dataset.form === "quick-input") {
+    startFromQuickInput(form, event.submitter);
+  } else if (form.dataset.form === "questions") {
+    continueFromQuestions(form, event.submitter);
   }
 });
 
 app.addEventListener("input", (event) => {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) {
-    return;
-  }
-
-  if (target.form?.dataset.form === "creative-brief") {
-    updateBriefFromForm(target.form);
-    return;
-  }
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
 
   if (target.dataset.characterPath) {
     try {
       const value = target.dataset.valueType === "lines"
         ? linesToArray(target.value)
         : target.value;
-      updateCharacterField(target.dataset.characterPath, value);
+      updateCharacterField(appState, target.dataset.characterPath, value);
+      scheduleAutosave();
     } catch (error) {
       showError(error);
     }
     return;
   }
-
-  if (target.dataset.regenerationInstruction) {
-    appState.fieldInstructions[target.dataset.regenerationInstruction] = target.value;
+  if (target.dataset.revisionInstruction) {
+    appState.fieldInstructions[target.dataset.revisionInstruction] = target.value;
     return;
   }
-
   if (target.dataset.packFlow && target.dataset.packBlock) {
     try {
-      handlePackInput(target);
+      const result = editPlatformPack(
+        appState,
+        target.dataset.packFlow,
+        target.dataset.packBlock,
+        target.value,
+      );
+      if (result?.block) updatePackIndicators(result.pack, result.block);
+      scheduleAutosave();
     } catch (error) {
       showError(error);
     }
     return;
   }
-
   if (Object.prototype.hasOwnProperty.call(target.dataset, "projectTitle")) {
-    appState.project.title = target.value;
-    markProjectChanged();
-    syncUnsavedProjectUi();
+    try {
+      setProjectTitle(appState, target.value);
+      scheduleAutosave();
+    } catch (error) {
+      showError(error);
+    }
   }
 });
 
 app.addEventListener("change", (event) => {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
-    return;
-  }
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+  if (appState.loading) return;
 
   if (Object.prototype.hasOwnProperty.call(target.dataset, "appMode")) {
-    appState.mode = target.value === "real" ? "real" : "mock";
-    appState.error = "";
-    appState.notice = "运行模式已切换，当前项目内容保持不变。";
+    setProjectMode(appState, target.value);
     render();
     return;
   }
-
   if (Object.prototype.hasOwnProperty.call(target.dataset, "importFile")) {
     const file = target.files?.[0];
-    if (!file) {
-      return;
-    }
+    if (!file) return;
     void runTask("import-project", async () => {
       try {
-        const imported = await importProjectJson(await file.text());
-        replaceCurrentProject(imported);
-        appState.currentStep = 6;
-        await refreshSavedProjects();
-        await refreshVersions();
-        appState.notice = "JSON 项目已导入并另存为新项目。";
+        await autosave.flush();
+        await importProjectIntoState(appState, await file.text());
       } finally {
         target.value = "";
       }
     });
+    return;
   }
+  if (target.dataset.characterPath) render();
 });
 
 app.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
-  if (!button || button.disabled || appState.loading) {
+  if (!button || button.disabled) return;
+  const { action } = button.dataset;
+
+  if (action === "cancel-generation") {
+    taskRunner.cancel("generation");
     return;
   }
+  if (action === "cancel-current-request") {
+    taskRunner.cancel(appState.pendingAction);
+    return;
+  }
+  if (appState.loading) return;
 
-  const { action } = button.dataset;
-  if (action === "go-step") {
-    const step = Number(button.dataset.step);
-    if (!canVisitStep(step)) {
-      showError(new Error("请先完成当前步骤所需内容。"));
-      return;
-    }
-    appState.currentStep = step;
+  if (action === "go-home") {
+    void autosave.flush().catch(() => {});
+    appState.currentStep = "home";
     appState.error = "";
     appState.notice = "";
     render();
     return;
   }
-
-  if (action === "go-field") {
-    goToField(button.dataset.fieldPath);
+  if (action === "create-character" || action === "create-story") {
+    createProject(appState, action === "create-story" ? "story" : "character");
+    render();
     return;
   }
-
-  if (action === "expand-character") {
-    const concept = appState.project.concepts.find(
-      (item) => item.id === button.dataset.conceptId,
-    );
-    if (!concept) {
-      showError(new Error("找不到所选候选。" ));
-      return;
-    }
-    void runTask(`expand-${concept.id}`, async () => {
-      const character = await expandCharacter(
-        concept,
-        appState.project.brief,
-        getLLMClient(),
-      );
-      appState.selectedConceptId = concept.id;
-      appState.project.selectedConceptId = concept.id;
-      appState.project.character = character;
-      appState.project.ruleReport = null;
-      appState.project.simulationReport = null;
-      appState.project.platformPacks = [];
-      appState.currentStep = 3;
-      markProjectChanged();
-    });
+  if (action === "open-library") {
+    document.querySelector("#project-library")?.scrollIntoView({ behavior: "smooth" });
     return;
   }
-
-  if (action === "regenerate-field") {
-    const fieldPath = button.dataset.fieldPath;
-    const instruction = (appState.fieldInstructions[fieldPath] || "").trim();
-    if (!instruction) {
-      showError(new Error("请先填写此字段的修改要求。" ));
-      return;
-    }
-    void runTask(`regenerate-${fieldPath}`, async () => {
-      const patch = await regenerateField(
-        appState.project.character,
-        fieldPath,
-        instruction,
-        getLLMClient(),
-      );
-      const nextCharacter = applyFieldPatch(appState.project.character, patch);
-      assertCharacterDraft(nextCharacter);
-      appState.project.character = nextCharacter;
-      invalidateCharacterOutputs();
-      appState.activeFieldPath = fieldPath;
-      markProjectChanged();
-      appState.notice = `已只更新字段 ${fieldPath}。`;
-    });
+  if (action === "choose-import") {
+    app.querySelector("[data-import-file]")?.click();
     return;
   }
-
-  if (action === "add-repeater") {
-    addRepeater(button.dataset.repeater);
+  if (action === "dismiss-recovery") {
+    dismissRecovery(appState);
+    render();
     return;
   }
-
-  if (action === "remove-repeater") {
-    removeRepeater(button.dataset.repeater, Number(button.dataset.index));
-    return;
-  }
-
-  if (action === "run-rules") {
-    void runTask("run-rules", async () => {
-      appState.project.ruleReport = checkRules(appState.project.character);
-      markProjectChanged();
-      appState.notice = "规则检查已完成。";
-    });
-    return;
-  }
-
-  if (action === "run-simulation") {
-    void runTask("run-simulation", async () => {
-      appState.project.simulationReport = await runDialogueTest(
-        appState.project.character,
-        getLLMClient(),
-      );
-      markProjectChanged();
-      appState.notice = "8 场景模拟已完成。";
-    });
-    return;
-  }
-
-  if (action === "generate-pack") {
-    void runTask("generate-pack", async () => {
-      const flowId = appState.project.brief.outputMode;
-      const pack = await generateMaoxiangPack(
-        appState.project.character,
-        flowId,
-        getLLMClient(),
-      );
-      appState.project.platformPacks = [
-        ...appState.project.platformPacks.filter((item) => item.flowId !== flowId),
-        pack,
-      ];
-      markProjectChanged();
-      appState.notice = "猫箱输入包已生成，可继续手工编辑。";
-    });
-    return;
-  }
-
-  if (action === "copy-pack-block") {
-    const block = getPackBlock(button.dataset.packFlow, button.dataset.packBlock);
-    if (!block) {
-      showError(new Error("找不到要复制的输入包字段。" ));
-      return;
-    }
-    void runTask(`copy-${block.id}`, async () => {
-      await copyText(block.text);
-      appState.notice = `“${block.label}”已复制。`;
-    });
-    return;
-  }
-
-  if (action === "save-project") {
-    void runTask("save-project", async () => {
-      assertProjectReadyToSave();
-      const saved = await saveProject(appState.project);
-      replaceCurrentProject(saved);
-      appState.currentStep = 6;
-      await refreshSavedProjects();
-      await refreshVersions();
-      appState.notice = "项目已保存，并创建了一个历史版本。";
-    });
-    return;
-  }
-
-  if (action === "load-project") {
+  if (action === "recover-project" || action === "load-project") {
+    const projectId = button.dataset.projectId;
     void runTask("load-project", async () => {
-      const project = await getProject(button.dataset.projectId);
-      if (!project) {
-        throw new Error("项目不存在或已被删除。" );
-      }
-      replaceCurrentProject(project);
-      appState.currentStep = 3;
-      await refreshSavedProjects();
-      await refreshVersions();
-      appState.notice = "已打开本地项目。";
+      await autosave.flush();
+      await loadProjectIntoState(appState, projectId);
     });
     return;
   }
-
   if (action === "delete-project") {
     const project = appState.savedProjects.find(
       (item) => item.id === button.dataset.projectId,
     );
-    const confirmed = window.confirm(
-      `确定删除“${project?.title || "未命名项目"}”及其历史版本吗？`,
+    if (!window.confirm(`确定删除“${project?.title || "未命名项目"}”及其历史版本吗？`)) return;
+    void runTask("delete-project", () =>
+      deleteProjectFromState(appState, button.dataset.projectId));
+    return;
+  }
+  if (action === "back-to-create") {
+    appState.currentStep = "create";
+    appState.error = "";
+    appState.notice = "";
+    render();
+    return;
+  }
+  if (action === "select-concept") {
+    const concept = appState.project.concepts.find(
+      (item) => item.id === button.dataset.conceptId,
     );
-    if (!confirmed) {
+    if (!concept) {
+      showError(new Error("找不到所选方向。"));
       return;
     }
-    void runTask("delete-project", async () => {
-      await deleteProject(button.dataset.projectId);
-      if (appState.project.id === button.dataset.projectId) {
-        resetCurrentProject();
-        appState.currentStep = 0;
-      }
-      await refreshSavedProjects();
-      await refreshVersions();
-      appState.notice = "项目及其历史版本已删除。";
+    resetProgress(appState, ["analyze"]);
+    activateStage("generate");
+    void beginGeneration(async (signal) => {
+      await selectConceptForProject(appState, concept, getLLMClient(), signal);
+      completeStage("generate");
+      await runDefaultPlatformStage(signal);
     });
     return;
   }
-
+  if (action === "run-quick-check") {
+    void runTask("quick-check", async ({ signal }) => {
+      await runQuickChecksForProject(appState, getLLMClient(), signal);
+      scheduleAutosave();
+    });
+    return;
+  }
+  if (action === "generate-platform-pack") {
+    const flowId = button.dataset.packFlow;
+    void runTask("generate-platform-pack", async ({ signal }) => {
+      await generatePlatformPackForProject(
+        appState,
+        getLLMClient(),
+        signal,
+        flowId,
+      );
+      appState.notice = `“${flowId}”输入包已生成。`;
+      scheduleAutosave();
+    });
+    return;
+  }
+  if (action === "go-field") {
+    appState.activeFieldPath = button.dataset.fieldPath || "";
+    render();
+    requestAnimationFrame(() => scrollToFieldPath(appState.activeFieldPath));
+    return;
+  }
+  if (action === "run-full-simulation") {
+    void runTask("full-simulation", async ({ signal }) => {
+      await runSimulationForProject(appState, getLLMClient(), signal);
+      scheduleAutosave();
+    });
+    return;
+  }
+  if (action === "copy-pack-block") {
+    const block = getPackBlock(
+      appState,
+      button.dataset.packFlow,
+      button.dataset.packBlock,
+    );
+    if (!canCopyPlatformBlock(appState, block)) {
+      showError(new Error("该字段无效，修正后才能复制。"));
+      return;
+    }
+    void copyText(block.text).then(() => {
+      appState.notice = `“${block.label}”已复制。`;
+      render();
+    }).catch(showError);
+    return;
+  }
+  if (action === "copy-pack") {
+    const pack = getActivePack(appState, button.dataset.packFlow);
+    if (!canCopyPlatformPack(appState, pack)) {
+      showError(new Error("输入包含有无效字段，修正后才能复制整包。"));
+      return;
+    }
+    void copyText(createPackCopyText(pack)).then(() => {
+      appState.notice = "平台文本整包已复制。";
+      render();
+    }).catch(showError);
+    return;
+  }
+  if (action === "propose-revision") {
+    const fieldPath = button.dataset.fieldPath;
+    const instruction = String(appState.fieldInstructions[fieldPath] || "").trim();
+    if (!instruction) {
+      showError(new Error("请先填写这个字段的 AI 修改要求。"));
+      return;
+    }
+    void runTask(`revision-${fieldPath}`, ({ signal }) =>
+      proposeCharacterRevision(
+        appState,
+        fieldPath,
+        instruction,
+        getLLMClient(),
+        signal,
+      ));
+    return;
+  }
+  if (action === "confirm-revision") {
+    void runTask("confirm-revision", async () => {
+      confirmCharacterRevision(appState);
+      await persistCheckpoint(true);
+    });
+    return;
+  }
+  if (action === "discard-revision") {
+    discardCharacterRevision(appState);
+    render();
+    return;
+  }
+  if (action === "undo-revision") {
+    try {
+      undoLastCharacterRevision(appState);
+      scheduleAutosave();
+      render();
+    } catch (error) {
+      showError(error);
+    }
+    return;
+  }
+  if (action === "add-repeater") {
+    addCharacterRepeater(appState, button.dataset.repeater);
+    scheduleAutosave();
+    render();
+    return;
+  }
+  if (action === "remove-repeater") {
+    removeCharacterRepeater(
+      appState,
+      button.dataset.repeater,
+      Number(button.dataset.index),
+    );
+    scheduleAutosave();
+    render();
+    return;
+  }
+  if (action === "save-project") {
+    void runTask("save-project", async () => {
+      await autosave.flush();
+      await saveCurrentProject(appState);
+    });
+    return;
+  }
   if (action === "restore-version") {
     void runTask("restore-version", async () => {
-      const restored = await restoreVersion(
-        appState.project.id,
-        button.dataset.versionId,
-      );
-      replaceCurrentProject(restored);
-      appState.currentStep = 6;
-      await refreshSavedProjects();
-      await refreshVersions();
-      appState.notice = "历史版本已恢复，并保留了恢复后的新版本。";
+      await autosave.flush();
+      await restoreProjectVersion(appState, button.dataset.versionId);
     });
     return;
   }
-
   if (action === "export-json" || action === "export-markdown") {
-    const isStored = appState.savedProjects.some(
-      (project) => project.id === appState.project.id,
-    );
-    if (appState.dirty || !isStored) {
-      showError(new Error("请先保存当前修改，再导出最新版本。"));
-      return;
-    }
     const isJson = action === "export-json";
     void runTask(action, async () => {
-      const content = isJson
-        ? await exportProjectJson(appState.project.id)
-        : await exportProjectMarkdown(appState.project.id);
+      await autosave.flush();
+      const content = await exportSavedProject(
+        appState,
+        isJson ? "json" : "markdown",
+      );
       const extension = isJson ? "json" : "md";
       downloadText(
         content,
         createDownloadFilename(appState.project.title, extension),
-        isJson ? "application/json;charset=utf-8" : "text/markdown;charset=utf-8",
+        isJson
+          ? "application/json;charset=utf-8"
+          : "text/markdown;charset=utf-8",
       );
       appState.notice = `${isJson ? "JSON" : "Markdown"} 已导出。`;
     });
-    return;
-  }
-
-  if (action === "choose-import") {
-    app.querySelector("[data-import-file]")?.click();
   }
 });
 
 render();
-void runTask("load-projects", async () => {
-  await refreshSavedProjects();
-});
+void refreshSavedProjects(appState)
+  .then(() => render())
+  .catch((error) => {
+    appState.error = toReadableError(error);
+    render();
+  });

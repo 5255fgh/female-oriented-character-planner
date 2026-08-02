@@ -6,6 +6,8 @@ import {
   getValueAtPath,
 } from "../contracts.js";
 
+const FIELD_REGENERATION_PROMPT_VERSION = "field-regeneration/v1";
+
 /**
  * @param {import("../contracts.js").CharacterDraft} character
  * @param {string} fieldPath
@@ -33,6 +35,7 @@ export async function regenerateField(
     {
       role: "user",
       content: [
+        `提示词版本：${FIELD_REGENERATION_PROMPT_VERSION}`,
         "以下完整角色仅作为只读上下文，绝对不能重写或返回完整角色。",
         `完整角色 JSON：\n${JSON.stringify(character, null, 2)}`,
         `唯一允许重写的字段路径：${fieldPath}`,

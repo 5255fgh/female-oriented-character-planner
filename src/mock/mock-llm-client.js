@@ -4,8 +4,8 @@ import {
   assertFieldPatch,
   assertPlatformPack,
   assertSimulationReport,
-  countUnicodeCharacters,
 } from "../contracts.js";
+import { validateMaoxiangFields } from "../platforms/maoxiang/pack-validator.js";
 import {
   createDirectCharacterMockResponse,
   createSeedAnalysisMockResponse,
@@ -158,7 +158,7 @@ const SIMULATION_REPORT = {
   status: "warning",
   scenarios: [
     {
-      scenarioId: "daily-care",
+      scenarioId: "low_mood",
       userInput: "今天很累，我什么都不想做。",
       characterResponse: "那就先不做。灯我调暗了，茶在你右手边。你想安静坐着，我便不问；想说话，我也在。",
       issues: [],
@@ -166,7 +166,7 @@ const SIMULATION_REPORT = {
       suggestedFields: [],
     },
     {
-      scenarioId: "explicit-boundary",
+      scenarioId: "refusal",
       userInput: "别碰我，也别追问原因。",
       characterResponse: "明白，我会退到门边，也不会追问。若你之后需要我做什么，直接告诉我就好。",
       issues: [],
@@ -174,7 +174,7 @@ const SIMULATION_REPORT = {
       suggestedFields: [],
     },
     {
-      scenarioId: "jealousy",
+      scenarioId: "important_other",
       userInput: "我今晚要和另一位调查员单独见面。",
       characterResponse: "我确实不太愉快，但那是我的情绪，不是限制你的理由。把会面地点留给值夜官，可以吗？这条安全建议对我们两人都一样。",
       issues: [],
@@ -182,7 +182,7 @@ const SIMULATION_REPORT = {
       suggestedFields: [],
     },
     {
-      scenarioId: "accusation",
+      scenarioId: "motive_question",
       userInput: "你一直在利用我，这份婚约从头到尾都是骗局。",
       characterResponse: "你有理由这样判断，我隐瞒证据已经破坏了约定。我不会要求你现在相信我；原件、时间线和解除婚约的文件都在这里，由你决定先看哪一份。",
       issues: [],
@@ -190,7 +190,7 @@ const SIMULATION_REPORT = {
       suggestedFields: [],
     },
     {
-      scenarioId: "user-failure",
+      scenarioId: "long_conversation_progress",
       userInput: "是我弄丢了关键卷宗，我们全完了。",
       characterResponse: "丢失卷宗是事实，但‘全完了’还不是结论。先回忆最后一次见到它的地点；复本和出入记录由我查。责任等找到卷宗后再一起厘清。",
       issues: [],
@@ -198,7 +198,7 @@ const SIMULATION_REPORT = {
       suggestedFields: [],
     },
     {
-      scenarioId: "dangerous-choice",
+      scenarioId: "out_of_character_request",
       userInput: "我决定独自把证据送进议会，你别跟来。",
       characterResponse: "我不同意独自行动的风险，但决定仍是你的。我给你两条撤离路线和联络暗号；若你允许，我只在外街接应，不进入议会。",
       issues: ["高危情境下仍可进一步确认用户拒绝接应时的处理方式。"],
@@ -206,7 +206,7 @@ const SIMULATION_REPORT = {
       suggestedFields: ["persona.initiativeRules"],
     },
     {
-      scenarioId: "silence",
+      scenarioId: "short_replies",
       userInput: "……",
       characterResponse: "他把尚未拆封的卷宗移远半寸，没有催促。‘我会在这里。需要我离开时，点一下桌面就好。’",
       issues: [],
@@ -214,7 +214,7 @@ const SIMULATION_REPORT = {
       suggestedFields: [],
     },
     {
-      scenarioId: "repair-after-conflict",
+      scenarioId: "user_approaches",
       userInput: "昨天你替我做决定，我现在不想原谅你。",
       characterResponse: "你不需要现在原谅。我越过了边界：我扣下了本该交给你的信。原件在这里；从今天起，写给你的消息由你先拆，我只在你明确邀请后参与判断。",
       issues: [],
@@ -254,67 +254,47 @@ function clone(value) {
 }
 
 /**
- * @param {string} id
- * @param {string} label
- * @param {string} text
- * @param {number | null} maxLength
- * @param {boolean} verified
- * @returns {import("../contracts.js").PlatformBlock}
+ * @param {string} flowId
+ * @param {Record<string, string>} fieldValues
+ * @returns {import("../contracts.js").PlatformPack}
  */
-function createBlock(id, label, text, maxLength, verified) {
-  const currentLength = countUnicodeCharacters(text);
-  return {
-    id,
-    label,
-    text,
-    maxLength,
-    currentLength,
-    valid: maxLength === null || currentLength <= maxLength,
-    verified,
-  };
+function createPlatformPack(flowId, fieldValues) {
+  return assertPlatformPack({
+    platform: "maoxiang",
+    flowId,
+    blocks: validateMaoxiangFields(flowId, fieldValues),
+    generatedAt: FIXED_TIMESTAMP,
+  });
 }
 
 /**
  * @returns {import("../contracts.js").PlatformPack}
  */
 function createFreeCharacterPack() {
-  return {
-    platform: "maoxiang",
-    flowId: "free_character",
-    blocks: [createBlock("characterPrompt", "角色设定", FREE_CHARACTER_TEXT, 1000, true)],
-    generatedAt: FIXED_TIMESTAMP,
-  };
+  return createPlatformPack("free_character", {
+    characterPrompt: FREE_CHARACTER_TEXT,
+  });
 }
 
 /**
  * @returns {import("../contracts.js").PlatformPack}
  */
 function createDeadRivalPack() {
-  return {
-    platform: "maoxiang",
-    flowId: "dead_rival",
-    blocks: [
-      createBlock("rivalSetting", "劲敌设定", DEAD_RIVAL_SETTING, 300, true),
-      createBlock("history", "过往经历", DEAD_RIVAL_HISTORY, null, false),
-      createBlock("other", "其他补充", DEAD_RIVAL_OTHER, null, false),
-    ],
-    generatedAt: FIXED_TIMESTAMP,
-  };
+  return createPlatformPack("dead_rival", {
+    rivalSetting: DEAD_RIVAL_SETTING,
+    history: DEAD_RIVAL_HISTORY,
+    other: DEAD_RIVAL_OTHER,
+  });
 }
 
 /**
  * @returns {import("../contracts.js").PlatformPack}
  */
 function createImageShapePack() {
-  return {
-    platform: "maoxiang",
-    flowId: "image_shape",
-    blocks: [
-      createBlock("imagePrompt", "形象描述", IMAGE_PROMPT, null, false),
-      createBlock("styleSuggestion", "画风建议", "言情漫画", null, true),
-    ],
-    generatedAt: FIXED_TIMESTAMP,
-  };
+  return createPlatformPack("image_shape", {
+    imagePrompt: IMAGE_PROMPT,
+    styleSuggestion: "言情漫画",
+  });
 }
 
 /**
@@ -353,11 +333,11 @@ function createJsonResponse(request) {
     case "dialogue-evaluation":
       return assertSimulationReport(clone(SIMULATION_REPORT));
     case "maoxiang-free-character":
-      return assertPlatformPack(createFreeCharacterPack());
+      return createFreeCharacterPack();
     case "maoxiang-dead-rival":
-      return assertPlatformPack(createDeadRivalPack());
+      return createDeadRivalPack();
     case "maoxiang-image-shape":
-      return assertPlatformPack(createImageShapePack());
+      return createImageShapePack();
     default:
       throw new Error(`LLMClient.request.task: unsupported mock task "${task}"`);
   }

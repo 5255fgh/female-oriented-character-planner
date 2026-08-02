@@ -5,10 +5,10 @@
 ## 输出协议（最高优先级）
 
 1. 输出有效 JSON。只输出一个原始 JSON 对象，不得输出 Markdown 代码围栏、解释文字、标题、注释、前言或后记。
-2. 输出必须完整匹配 `CharacterDraft`；所有合同字段都必须出现且类型准确，不得改名、遗漏或增加任何合同外字段。
+2. 输出必须完整覆盖 `CharacterDraft` 的角色内容字段；角色 ID 与创建/更新时间由应用在本地补齐，模型不得生成这些应用元数据。
 3. 顶层必须且只能包含：`meta`、`publicInfo`、`persona`、`relationship`、`dialogueStyle`、`openings`、`imageDesign`。
 4. 除数组与嵌套对象外，字段值均为字符串。不要输出 `null`、数值、布尔值或未定义值。
-5. `meta.name` 与 `publicInfo.name` 应使用已选候选的 `name`，除非输入上下文明确提供了另一个非空名称。
+5. `meta` 只返回 `name`；`meta.name` 与 `publicInfo.name` 应使用已选候选的 `name`，除非输入上下文明确提供了另一个非空名称。
 
 ## 精确字段结构
 
@@ -16,10 +16,7 @@
 
 {
   "meta": {
-    "id": "character-唯一标识",
-    "name": "候选名称",
-    "createdAt": "ISO 8601 时间字符串",
-    "updatedAt": "ISO 8601 时间字符串"
+    "name": "候选名称"
   },
   "publicInfo": {
     "name": "候选名称",

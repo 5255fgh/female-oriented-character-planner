@@ -1,5 +1,10 @@
-const DATABASE_NAME = "female-oriented-character-planner";
-const DATABASE_VERSION = 1;
+import { migrateStoredProject } from "./migrations.js";
+
+export const DATABASE_NAME = "female-oriented-character-planner";
+export const DATABASE_VERSION = 2;
+
+const PROJECTS_STORE = "projects";
+const VERSIONS_STORE = "versions";
 
 function createError(message, source) {
   const detail = source && typeof source.message === "string" ? source.message : "";
@@ -56,8 +61,100 @@ export function transactionDone(transaction) {
   });
 }
 
+function ensureStoresAndIndexes(database, transaction) {
+  const projects = database.objectStoreNames.contains(PROJECTS_STORE)
+    ? transaction.objectStore(PROJECTS_STORE)
+    : database.createObjectStore(PROJECTS_STORE, { keyPath: "id" });
+  if (!projects.indexNames.contains("updatedAt")) {
+    projects.createIndex("updatedAt", "updatedAt", { unique: false });
+  }
+
+  const versions = database.objectStoreNames.contains(VERSIONS_STORE)
+    ? transaction.objectStore(VERSIONS_STORE)
+    : database.createObjectStore(VERSIONS_STORE, { keyPath: "id" });
+  if (!versions.indexNames.contains("projectId")) {
+    versions.createIndex("projectId", "projectId", { unique: false });
+  }
+  if (!versions.indexNames.contains("createdAt")) {
+    versions.createIndex("createdAt", "createdAt", { unique: false });
+  }
+  if (!versions.indexNames.contains("projectIdCreatedAt")) {
+    versions.createIndex(
+      "projectIdCreatedAt",
+      ["projectId", "createdAt"],
+      { unique: false },
+    );
+  }
+
+  return { projects, versions };
+}
+
+function migrateProjectRecords(store, transaction, setUpgradeError) {
+  const request = store.getAll();
+  request.addEventListener(
+    "success",
+    () => {
+      try {
+        if (!Array.isArray(request.result)) {
+          throw new Error("项目 Object Store 返回了无效数据");
+        }
+        for (const record of request.result) {
+          store.put(migrateStoredProject(record));
+        }
+      } catch (error) {
+        setUpgradeError(error);
+        transaction.abort();
+      }
+    },
+    { once: true },
+  );
+}
+
+function migrateVersionRecords(store, transaction, setUpgradeError) {
+  const request = store.getAll();
+  request.addEventListener(
+    "success",
+    () => {
+      try {
+        if (!Array.isArray(request.result)) {
+          throw new Error("版本 Object Store 返回了无效数据");
+        }
+        for (const record of request.result) {
+          if (record === null || typeof record !== "object" || Array.isArray(record)) {
+            throw new Error("版本记录无效");
+          }
+          if (
+            typeof record.id !== "string" ||
+            typeof record.projectId !== "string" ||
+            typeof record.createdAt !== "string" ||
+            !Object.prototype.hasOwnProperty.call(record, "snapshot")
+          ) {
+            throw new Error("版本记录无效");
+          }
+
+          const snapshot = migrateStoredProject(record.snapshot);
+          if (snapshot.id !== record.projectId) {
+            throw new Error("版本快照与项目不匹配");
+          }
+          store.put({
+            id: record.id,
+            projectId: record.projectId,
+            snapshot,
+            createdAt: record.createdAt,
+          });
+        }
+      } catch (error) {
+        setUpgradeError(error);
+        transaction.abort();
+      }
+    },
+    { once: true },
+  );
+}
+
 /**
- * 打开固定版本的本地项目库，并只创建约定的两个 Object Store。
+ * 打开固定版本的本地项目库。v2 保留原有 Object Store，迁移旧项目/版本记录，
+ * 并为版本增加 [projectId, createdAt] 复合索引。
  *
  * @returns {Promise<IDBDatabase>}
  */
@@ -74,8 +171,8 @@ export function openDatabase() {
     throw createError("无法打开本地项目库", error);
   }
 
-  let upgradeFailed = false;
-  request.addEventListener("upgradeneeded", () => {
+  let upgradeError = null;
+  request.addEventListener("upgradeneeded", (event) => {
     try {
       const database = request.result;
       const transaction = request.transaction;
@@ -83,24 +180,16 @@ export function openDatabase() {
         throw new Error("数据库升级事务不可用");
       }
 
-      const projects = database.objectStoreNames.contains("projects")
-        ? transaction.objectStore("projects")
-        : database.createObjectStore("projects", { keyPath: "id" });
-      if (!projects.indexNames.contains("updatedAt")) {
-        projects.createIndex("updatedAt", "updatedAt", { unique: false });
+      const stores = ensureStoresAndIndexes(database, transaction);
+      if (event.oldVersion > 0 && event.oldVersion < 2) {
+        const setUpgradeError = (error) => {
+          upgradeError = error;
+        };
+        migrateProjectRecords(stores.projects, transaction, setUpgradeError);
+        migrateVersionRecords(stores.versions, transaction, setUpgradeError);
       }
-
-      const versions = database.objectStoreNames.contains("versions")
-        ? transaction.objectStore("versions")
-        : database.createObjectStore("versions", { keyPath: "id" });
-      if (!versions.indexNames.contains("projectId")) {
-        versions.createIndex("projectId", "projectId", { unique: false });
-      }
-      if (!versions.indexNames.contains("createdAt")) {
-        versions.createIndex("createdAt", "createdAt", { unique: false });
-      }
-    } catch {
-      upgradeFailed = true;
+    } catch (error) {
+      upgradeError = error;
       request.transaction?.abort();
     }
   });
@@ -118,7 +207,11 @@ export function openDatabase() {
         }
 
         settled = true;
-        database.addEventListener("versionchange", () => database.close());
+        database.addEventListener(
+          "versionchange",
+          () => database.close(),
+          { once: true },
+        );
         resolve(database);
       },
       { once: true },
@@ -133,8 +226,8 @@ export function openDatabase() {
         settled = true;
         reject(
           createError(
-            upgradeFailed ? "初始化本地项目库失败" : "打开本地项目库失败",
-            request.error,
+            upgradeError ? "升级本地项目库失败" : "打开本地项目库失败",
+            upgradeError ?? request.error,
           ),
         );
       },
@@ -148,7 +241,7 @@ export function openDatabase() {
           return;
         }
         settled = true;
-        reject(new Error("本地项目库正在被其他页面占用"));
+        reject(new Error("本地项目库升级被阻塞，请关闭其他已打开页面后重试"));
       },
       { once: true },
     );
